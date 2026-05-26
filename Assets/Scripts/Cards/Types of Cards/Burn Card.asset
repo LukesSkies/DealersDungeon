@@ -10,14 +10,14 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 6347511114019e94e8875a40569fb674, type: 3}
-  m_Name: Attack Card
+  m_Name: Burn Card
   m_EditorClassIdentifier: 
-  cardName: Attack Card
+  cardName: Burn Card
   cardType: 1
-  baseDamage: 5
-  manaCost: 1
+  baseDamage: 3
+  manaCost: 3
   effects:
-  - effectType: 5
+  - effectType: 6
     value: 3
     duration: 2
     targetAllEnemies: 1

@@ -14,8 +14,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   cardName: Heal Card
   cardType: 2
-  baseDamage: 1
-  manaCost: 1
+  baseDamage: 3
+  manaCost: 3
   effects:
   - effectType: 14
     value: 5

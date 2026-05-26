@@ -406,9 +406,16 @@ MonoBehaviour:
   m_GameObject: {fileID: 237798210}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f8ef996601b39634aa7c1c86f9e50ef6, type: 3}
+  m_Script: {fileID: 11500000, guid: b2f8f3068f19ae4489690ecea5f99bd5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  generator: {fileID: 1809704392}
+  spawner: {fileID: 1809704391}
+  player: {fileID: 5728895702301873605}
+  generateOnStart: 1
+  startGridPosition: {x: 0, y: 0}
+  resetPlayerRotationOnFloorStart: 1
+  nextFloorDelay: 1
 --- !u!1 &288810177
 GameObject:
   m_ObjectHideFlags: 0
@@ -880,7 +887,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 0, y: -33}
+  m_AnchoredPosition: {x: 1, y: -33}
   m_SizeDelta: {x: 133.9569, y: 35}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &737041063
@@ -1016,8 +1023,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 139, y: -33}
-  m_SizeDelta: {x: 212.1021, y: 34.2968}
+  m_AnchoredPosition: {x: 167, y: -33}
+  m_SizeDelta: {x: 212.1021, y: 35.0232}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &775221941
 MonoBehaviour:
@@ -1039,7 +1046,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: 10/10 MP
+  m_text: 'Mana: 0'
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -1066,7 +1073,7 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 30.65
+  m_fontSize: 31.3
   m_fontSizeBase: 36
   m_fontWeight: 400
   m_enableAutoSizing: 1
@@ -1409,7 +1416,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: 10/10 MP
+  m_text: 
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -1436,7 +1443,7 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 30.65
+  m_fontSize: 36
   m_fontSizeBase: 36
   m_fontWeight: 400
   m_enableAutoSizing: 1
@@ -3204,10 +3211,29 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cbd009f5e31c0734a851022c6cad8aee, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  roomPrefabs: []
+  roomPrefabs:
+  - {fileID: 4271748255793018203, guid: 66d9a3c8279398f469fcdc93f52be2d7, type: 3}
+  - {fileID: 6104156147007703717, guid: b27b55a66564fba4880585d2d95caf86, type: 3}
+  - {fileID: 7873224812965672686, guid: 03d5660183a328b40b35aae5f104d711, type: 3}
+  - {fileID: 8860553799702677908, guid: 37029b73b1c9de243a0978a7ba2fdcad, type: 3}
+  - {fileID: 8097966624968585342, guid: d2b51100951df8443bef3cfd247491c7, type: 3}
+  - {fileID: 4990826189053875992, guid: 28aa1975652273b458c3645812f90f67, type: 3}
+  - {fileID: 8126092669008366483, guid: 51132eb8d8838694ba676090d04a7ab1, type: 3}
+  - {fileID: 3686115754229441135, guid: 1a0f277ddbf11844d8c91cec60aaee37, type: 3}
+  - {fileID: 6428794888031841589, guid: 803d701a7ab8c98498f18f88bf75085f, type: 3}
+  - {fileID: 3874222214280780859, guid: c8fc4f7580103f14395e280cf807023c, type: 3}
+  - {fileID: 8331869893591430356, guid: 9bd35f4b229bca644b3a10a44bbed3b0, type: 3}
+  - {fileID: 4887926385404252971, guid: 2470f08d89aabb045ae238443b0d8f98, type: 3}
+  - {fileID: 7358150350024974113, guid: b5dedf38f60bdb74fb237a78327870cd, type: 3}
+  - {fileID: 6850454250959251121, guid: a9de7a4e6a148b34fbfab29b1fa716eb, type: 3}
+  - {fileID: 3860063631705372038, guid: c099c8f09356b4b408d4a5671c914762, type: 3}
   startRoomPrefab: {fileID: 3860063631705372038, guid: 43417d7f8d763654dae80572a198db6f, type: 3}
-  bossRoomPrefab: {fileID: 390887759114802966, guid: 32c84f124864eb740b6250bd5303f508, type: 3}
-  roomSize: 20
+  bossRoomPrefab: {fileID: 5914670136462805655, guid: 080db9c40f4bb8a4a9b3d3a8884189e9, type: 3}
+  dungeonParent: {fileID: 237798212}
+  roomOffset: {x: 21, y: 21}
+  disableStackedDoorVisuals: 1
+  validateDoorAlignment: 1
+  doorAlignmentTolerance: 0.1
 --- !u!114 &1809704392
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3222,6 +3248,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   roomCount: 12
   extraConnectionChance: 0.15
+  forceStartRoomFourWay: 1
+  forceBossRoomAboveDungeon: 1
+  bossCountsTowardRoomCount: 1
+  maxGenerationSafetySteps: 5000
 --- !u!4 &1809704393
 Transform:
   m_ObjectHideFlags: 0
@@ -3249,6 +3279,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 449b5ddbb62b27b4d93e3f26663ffbf1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  startRoomStartsCombat: 0
+  firstVisitStartsCombat: 1
 --- !u!1 &1851171438
 GameObject:
   m_ObjectHideFlags: 0
@@ -3533,6 +3565,17 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+--- !u!114 &5728895702301873605 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 7053869889519449527, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+  m_PrefabInstance: {fileID: 5728895702301873604}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 24d6c6edf9b6ad9419c3cac54367dcab, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

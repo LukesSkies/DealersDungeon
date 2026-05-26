@@ -14,8 +14,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   cardName: Support Card
   cardType: 1
-  baseDamage: 1
-  manaCost: 1
+  baseDamage: 3
+  manaCost: 2
   effects:
   - effectType: 13
     value: 3
