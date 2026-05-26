@@ -25,11 +25,22 @@ public class DungeonSpawner : MonoBehaviour
     // this should support Up, Down, Right, and Left.
     public GameObject startRoomPrefab;
 
-    // The room prefab used only for the boss room.
+    [Header("Boss Room Prefabs")]
+
+    // Boss room prefabs.
     //
-    // In your current setup, the boss room is placed above another room,
-    // so it should only need a Down door.
-    public GameObject bossRoomPrefab;
+    // You can now assign multiple boss room types here.
+    //
+    // Example boss prefabs:
+    // - Boss_UpOnly
+    // - Boss_DownOnly
+    // - Boss_RightOnly
+    // - Boss_LeftOnly
+    //
+    // The spawner will choose the boss prefab that matches the generated boss room's door mask.
+    //
+    // Only one boss room will spawn because DungeonGenerator only marks one RoomNode as isBoss.
+    public List<GameObject> bossRoomPrefabs = new();
 
     [Header("Parent")]
 
@@ -211,19 +222,31 @@ public class DungeonSpawner : MonoBehaviour
             return startRoomPrefab;
         }
 
-        // Boss room uses a special prefab.
+        // Boss room now uses a list of possible boss prefabs.
+        //
+        // The selected boss prefab must match the boss room's required door mask.
+        //
+        // Example:
+        // If the boss room has only a Left door,
+        // this will look for a boss prefab with left = true.
         if (node.isBoss)
         {
-            ValidateSpecialPrefab(bossRoomPrefab, requiredMask, "Boss Room");
-            return bossRoomPrefab;
+            return GetBossPrefabForMask(requiredMask);
         }
 
+        // Normal room uses the regular room prefab list.
+        return GetNormalRoomPrefabForMask(requiredMask);
+    }
+
+    // Finds a normal room prefab that matches the required door mask.
+    private GameObject GetNormalRoomPrefabForMask(int requiredMask)
+    {
         // Exact matches have exactly the same openings as required.
-        List<GameObject> exactMatches = new();
+        List<GameObject> exactMatches = new List<GameObject>();
 
         // Compatible matches support all required openings,
         // but may also have extra openings that Room.Setup can hide.
-        List<GameObject> compatibleMatches = new();
+        List<GameObject> compatibleMatches = new List<GameObject>();
 
         foreach (GameObject prefab in roomPrefabs)
         {
@@ -266,13 +289,78 @@ public class DungeonSpawner : MonoBehaviour
         // - roomPrefabs is missing a required prefab
         // - or the RoomPrefab bools are not set correctly
         // - or modular rooms are not set to SupportsRequiredOpenings
-        Debug.LogError($"No valid room prefab found for door mask {requiredMask}. Required layout must match generated connections.");
+        Debug.LogError($"No valid normal room prefab found for door mask {requiredMask}.");
 
         // Fallback so the generation does not completely crash.
         return roomPrefabs.Count > 0 ? roomPrefabs[0] : null;
     }
 
-    // Checks whether a special prefab, like Start Room or Boss Room,
+    // Finds a boss room prefab that matches the required boss door mask.
+    //
+    // This is what allows multiple boss room types.
+    //
+    // Example:
+    // Required mask 1 = boss needs an Up door.
+    // Required mask 2 = boss needs a Down door.
+    // Required mask 4 = boss needs a Right door.
+    // Required mask 8 = boss needs a Left door.
+    private GameObject GetBossPrefabForMask(int requiredMask)
+    {
+        // Exact boss prefab matches.
+        List<GameObject> exactMatches = new List<GameObject>();
+
+        // Compatible boss prefab matches.
+        //
+        // You will usually want boss prefabs to be ExactOpenings,
+        // but this supports modular boss rooms too if needed.
+        List<GameObject> compatibleMatches = new List<GameObject>();
+
+        foreach (GameObject prefab in bossRoomPrefabs)
+        {
+            if (prefab == null)
+                continue;
+
+            RoomPrefab data = prefab.GetComponent<RoomPrefab>();
+
+            if (data == null)
+            {
+                Debug.LogWarning($"{prefab.name} is missing RoomPrefab component.");
+                continue;
+            }
+
+            int prefabMask = data.GetMask();
+
+            // Prefer exact boss room matches.
+            if (prefabMask == requiredMask)
+            {
+                exactMatches.Add(prefab);
+            }
+            // Allow compatible matches only if the RoomPrefab says it supports them.
+            else if (data.MatchesRequiredMask(requiredMask))
+            {
+                compatibleMatches.Add(prefab);
+            }
+        }
+
+        // Use a random exact matching boss room.
+        if (exactMatches.Count > 0)
+            return exactMatches[Random.Range(0, exactMatches.Count)];
+
+        // If no exact boss room exists, use a compatible boss room.
+        if (compatibleMatches.Count > 0)
+            return compatibleMatches[Random.Range(0, compatibleMatches.Count)];
+
+        // If nothing matches, log a clear error.
+        Debug.LogError(
+            $"No valid boss room prefab found for door mask {requiredMask}. " +
+            $"Add a boss prefab with this exact opening direction."
+        );
+
+        // Fallback so the game does not fully crash.
+        return bossRoomPrefabs.Count > 0 ? bossRoomPrefabs[0] : null;
+    }
+
+    // Checks whether a special prefab, like Start Room,
     // supports the required door layout.
     private void ValidateSpecialPrefab(GameObject prefab, int requiredMask, string label)
     {

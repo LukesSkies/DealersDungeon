@@ -37,19 +37,12 @@ public class ManaManager : MonoBehaviour
     }
 
     // Adds mana to the player.
-    //
-    // Example:
-    // AddMana(2);
-    // increases current mana by 2.
     public void AddMana(float amount)
     {
         currentMana += amount;
 
         // Refresh the UI after changing mana.
         UpdateManaUI();
-
-        // Debug message so you can see mana changes in the Console.
-        Debug.Log("Mana: " + currentMana);
     }
 
     // Resets mana back to zero.

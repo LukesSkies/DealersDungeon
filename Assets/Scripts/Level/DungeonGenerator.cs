@@ -1,6 +1,16 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
 
+// Controls how the generator chooses which room becomes the boss room.
+public enum BossRoomSelectionMode
+{
+    // Picks a dead-end room that is the furthest walk-distance from the start.
+    FurthestLeafFromStart,
+
+    // Picks a random valid dead-end room.
+    RandomLeaf
+}
+
 // This script creates the dungeon layout.
 //
 // It does NOT spawn visible rooms.
@@ -15,11 +25,12 @@ public class DungeonGenerator : MonoBehaviour
 
     // Total number of rooms to generate.
     //
-    // If bossCountsTowardRoomCount is true,
-    // this includes the boss room.
+    // The boss room is now selected from the generated rooms.
+    // This means roomCount already includes the boss room.
     //
-    // If bossCountsTowardRoomCount is false,
-    // the boss room is added after this many normal rooms.
+    // Example:
+    // roomCount = 12
+    // Result = 1 start room + 10 normal rooms + 1 boss room
     [Min(6)]
     public int roomCount = 12;
 
@@ -27,6 +38,10 @@ public class DungeonGenerator : MonoBehaviour
     //
     // 0 = no extra loops, more linear dungeon.
     // 1 = lots of loops, more connected dungeon.
+    //
+    // Important:
+    // The boss room is protected from extra loops.
+    // This keeps the boss room as a single-entrance room.
     [Range(0f, 1f)]
     public float extraConnectionChance = 0.15f;
 
@@ -40,34 +55,21 @@ public class DungeonGenerator : MonoBehaviour
 
     [Header("Boss Room")]
 
-    // If true, the boss room will always be placed above another room.
+    // Controls how the boss room is chosen.
     //
-    // This makes the boss room need only a Down door.
+    // FurthestLeafFromStart:
+    // Picks one of the furthest dead-end rooms from the start.
     //
-    // Example:
-    //
-    // Boss Room
-    //    |
-    // Parent Room
-    //
-    // Boss has Down connection.
-    // Parent has Up connection.
-    [Tooltip("Boss room will always be placed above another room, so the boss room only needs a Down door.")]
-    public bool forceBossRoomAboveDungeon = true;
+    // RandomLeaf:
+    // Picks a random dead-end room.
+    public BossRoomSelectionMode bossRoomSelectionMode = BossRoomSelectionMode.FurthestLeafFromStart;
 
-    // If true, the boss room is included in roomCount.
+    // The boss room must be at least this many room steps away from the start if possible.
     //
-    // Example:
-    // roomCount = 12
-    // bossCountsTowardRoomCount = true
-    // Result = 11 normal/start rooms + 1 boss room
-    //
-    // If false:
-    // roomCount = 12
-    // bossCountsTowardRoomCount = false
-    // Result = 12 normal/start rooms + 1 boss room
-    [Tooltip("If true, the boss room is included inside roomCount. If false, boss is added on top of roomCount.")]
-    public bool bossCountsTowardRoomCount = true;
+    // If no dead-end room is far enough away,
+    // the generator will fall back to any available dead-end room.
+    [Min(1)]
+    public int minimumBossDistanceFromStart = 2;
 
     [Header("Generation Safety")]
 
@@ -103,16 +105,8 @@ public class DungeonGenerator : MonoBehaviour
         if (forceStartRoomFourWay)
             CreateForcedStartConnections(start, map);
 
-        // Work out how many non-boss rooms should be generated.
-        int targetNormalRoomCount = roomCount;
-
-        // If the boss room counts toward the total room count,
-        // generate one fewer normal room because the boss will be added later.
-        if (bossCountsTowardRoomCount)
-            targetNormalRoomCount = Mathf.Max(5, roomCount - 1);
-
-        // Make sure the minimum count still supports the forced four-way start.
-        targetNormalRoomCount = Mathf.Max(targetNormalRoomCount, forceStartRoomFourWay ? 5 : 2);
+        // Make sure the room count is high enough to support the forced four-way start.
+        int targetRoomCount = Mathf.Max(roomCount, forceStartRoomFourWay ? 5 : 2);
 
         // Rooms that can still be expanded from.
         //
@@ -123,7 +117,7 @@ public class DungeonGenerator : MonoBehaviour
 
         // Keep adding rooms until the dungeon reaches the target count,
         // or until there are no rooms left that can expand.
-        while (map.Count < targetNormalRoomCount && expandableRooms.Count > 0)
+        while (map.Count < targetRoomCount && expandableRooms.Count > 0)
         {
             safety++;
 
@@ -179,14 +173,35 @@ public class DungeonGenerator : MonoBehaviour
             expandableRooms.Add(newRoom);
         }
 
-        // Place or mark the boss room.
-        if (forceBossRoomAboveDungeon)
-            CreateBossRoomAboveDungeon(map);
-        else
-            MarkFurthestRoomAsBoss(start);
+        // Make sure no old boss flags exist before selecting the new boss room.
+        //
+        // This helps guarantee that only one boss room exists.
+        ClearBossFlags(map);
 
-        // Add optional loop connections after the main layout exists.
-        AddOptionalLoops(map);
+        // Pick exactly one boss room.
+        //
+        // The boss room is selected from existing dead-end rooms,
+        // so it can appear Up, Down, Right, or Left depending on the dungeon shape.
+        RoomNode bossRoom = ChooseBossRoom(start, map);
+
+        if (bossRoom != null)
+        {
+            bossRoom.isBoss = true;
+
+            Debug.Log(
+                $"Boss room selected at {bossRoom.gridPos}. " +
+                $"Boss door mask: {bossRoom.GetDoorMask()}."
+            );
+        }
+        else
+        {
+            Debug.LogError("Could not select a boss room.");
+        }
+
+        // Add optional loop connections after the boss has been chosen.
+        //
+        // The boss room is protected so it stays a single-entrance room.
+        AddOptionalLoops(map, bossRoom);
 
         // Return all generated rooms as a list.
         return new List<RoomNode>(map.Values);
@@ -245,152 +260,193 @@ public class DungeonGenerator : MonoBehaviour
         return validDirections;
     }
 
-    // Creates the boss room above a valid parent room.
+    // Removes boss flags from every room.
     //
-    // This guarantees the boss room has only a Down door.
-    private void CreateBossRoomAboveDungeon(Dictionary<Vector2Int, RoomNode> map)
+    // This guarantees the generator starts clean each time.
+    private void ClearBossFlags(Dictionary<Vector2Int, RoomNode> map)
     {
-        // Find the best room to place the boss above.
-        RoomNode bossParent = FindBestBossParent(map);
-
-        if (bossParent == null)
+        foreach (RoomNode room in map.Values)
         {
-            Debug.LogError("Could not find a valid boss parent room.");
-            return;
+            if (room == null)
+                continue;
+
+            room.isBoss = false;
         }
-
-        // Boss is placed one grid space above the parent room.
-        Vector2Int bossPos = bossParent.gridPos + DirectionUtility.ToGridVector(Direction.Up);
-
-        // Safety check.
-        // This should not happen because FindBestBossParent already checks this.
-        if (map.ContainsKey(bossPos))
-        {
-            Debug.LogError($"Could not place boss room above {bossParent.gridPos} because {bossPos} is already occupied.");
-            return;
-        }
-
-        // Create the boss room.
-        RoomNode bossRoom = new RoomNode
-        {
-            gridPos = bossPos,
-            isStart = false,
-            isBoss = true
-        };
-
-        // Add the boss room to the dungeon map.
-        map[bossPos] = bossRoom;
-
-        // Connect the parent room upward to the boss room.
-        //
-        // This means:
-        // parent has Up door
-        // boss has Down door
-        bossParent.Connect(Direction.Up, bossRoom);
-
-        Debug.Log($"Boss room placed at {bossPos}. Boss room mask should be 2, which is Down only.");
     }
 
-    // Finds the best room to connect the boss room to.
+    // Chooses exactly one room to become the boss room.
     //
-    // It looks for a non-start room with empty space above it.
+    // The boss room should usually be a dead-end room.
     //
-    // It prefers:
-    // 1. The highest room on the grid
-    // 2. If tied, the room furthest sideways
-    private RoomNode FindBestBossParent(Dictionary<Vector2Int, RoomNode> map)
+    // A dead-end room means:
+    // - it has exactly one connection
+    // - it only needs one door
+    //
+    // This is what allows you to use multiple boss prefabs:
+    // - Up-only boss room
+    // - Down-only boss room
+    // - Right-only boss room
+    // - Left-only boss room
+    private RoomNode ChooseBossRoom(RoomNode start, Dictionary<Vector2Int, RoomNode> map)
     {
-        RoomNode bestRoom = null;
+        // Calculate path distances from the start room.
+        Dictionary<RoomNode, int> distances = GetDistancesFromStart(start);
+
+        // Collect valid dead-end rooms.
+        List<RoomNode> validLeafRooms = new List<RoomNode>();
 
         foreach (RoomNode room in map.Values)
         {
             if (room == null)
                 continue;
 
-            // Do not attach the boss directly to the start room.
+            // Never choose the start room as the boss room.
             if (room.isStart)
                 continue;
 
-            // Check if there is empty space above this room.
-            Vector2Int bossPos = room.gridPos + DirectionUtility.ToGridVector(Direction.Up);
-
-            if (map.ContainsKey(bossPos))
-                continue;
-
-            // First valid room becomes the current best room.
-            if (bestRoom == null)
-            {
-                bestRoom = room;
-                continue;
-            }
-
-            // Prefer the room with the highest Y grid value.
+            // Boss should be a dead-end room.
             //
-            // Remember:
-            // grid y = world Z.
-            bool roomIsHigher = room.gridPos.y > bestRoom.gridPos.y;
+            // This keeps the boss room to one entrance only.
+            if (room.GetConnectionCount() != 1)
+                continue;
 
-            // If both rooms are equally high,
-            // prefer the one further away sideways.
-            bool roomIsFurtherSideways =
-                room.gridPos.y == bestRoom.gridPos.y &&
-                Mathf.Abs(room.gridPos.x) > Mathf.Abs(bestRoom.gridPos.x);
+            int distance = distances.TryGetValue(room, out int value) ? value : 0;
 
-            if (roomIsHigher || roomIsFurtherSideways)
-                bestRoom = room;
+            // Prefer rooms far enough away from the start.
+            if (distance < minimumBossDistanceFromStart)
+                continue;
+
+            validLeafRooms.Add(room);
         }
-
-        // Return the best room if one was found.
-        if (bestRoom != null)
-            return bestRoom;
 
         // Fallback:
-        // If no ideal room was found, use any room with empty space above it.
-        foreach (RoomNode room in map.Values)
+        // If no dead-end room was far enough away,
+        // allow any dead-end room that is not the start room.
+        if (validLeafRooms.Count == 0)
         {
-            if (room == null)
-                continue;
+            foreach (RoomNode room in map.Values)
+            {
+                if (room == null)
+                    continue;
 
-            Vector2Int bossPos = room.gridPos + DirectionUtility.ToGridVector(Direction.Up);
+                if (room.isStart)
+                    continue;
 
-            if (!map.ContainsKey(bossPos))
-                return room;
+                if (room.GetConnectionCount() == 1)
+                    validLeafRooms.Add(room);
+            }
         }
 
-        // If every possible boss position is blocked, return null.
-        return null;
+        // Last-resort fallback:
+        // If no leaf rooms exist for some reason,
+        // allow any non-start room.
+        //
+        // This should be rare, but it prevents generation from completely failing.
+        if (validLeafRooms.Count == 0)
+        {
+            foreach (RoomNode room in map.Values)
+            {
+                if (room == null)
+                    continue;
+
+                if (!room.isStart)
+                    validLeafRooms.Add(room);
+            }
+        }
+
+        if (validLeafRooms.Count == 0)
+            return null;
+
+        // Random boss mode.
+        if (bossRoomSelectionMode == BossRoomSelectionMode.RandomLeaf)
+            return validLeafRooms[Random.Range(0, validLeafRooms.Count)];
+
+        // Default boss mode:
+        // choose the furthest valid dead-end room from the start.
+        return GetFurthestLeaf(validLeafRooms, distances);
     }
 
-    // Alternative boss logic.
+    // Finds the furthest room from a list of possible boss rooms.
     //
-    // If forceBossRoomAboveDungeon is false,
-    // this marks the furthest existing room as the boss room.
-    //
-    // Warning:
-    // This can require a boss prefab with Up, Down, Right, or Left doors depending on where it lands.
-    private void MarkFurthestRoomAsBoss(RoomNode start)
+    // If multiple rooms tie for furthest distance,
+    // one of them is chosen randomly.
+    private RoomNode GetFurthestLeaf(List<RoomNode> leafRooms, Dictionary<RoomNode, int> distances)
     {
-        RoomNode bossRoom = GetFurthestRoomByPathDistance(start);
+        int furthestDistance = -1;
+        List<RoomNode> furthestRooms = new List<RoomNode>();
 
-        if (bossRoom == null)
-            return;
+        foreach (RoomNode room in leafRooms)
+        {
+            int distance = distances.TryGetValue(room, out int value) ? value : 0;
 
-        if (bossRoom == start)
-            return;
+            if (distance > furthestDistance)
+            {
+                furthestDistance = distance;
+                furthestRooms.Clear();
+                furthestRooms.Add(room);
+            }
+            else if (distance == furthestDistance)
+            {
+                furthestRooms.Add(room);
+            }
+        }
 
-        bossRoom.isBoss = true;
+        if (furthestRooms.Count == 0)
+            return leafRooms[Random.Range(0, leafRooms.Count)];
+
+        return furthestRooms[Random.Range(0, furthestRooms.Count)];
+    }
+
+    // Calculates the walk-distance from the start room to every connected room.
+    //
+    // This uses breadth-first search.
+    //
+    // It measures actual room path distance,
+    // not straight-line distance.
+    private Dictionary<RoomNode, int> GetDistancesFromStart(RoomNode start)
+    {
+        Queue<RoomNode> queue = new Queue<RoomNode>();
+        Dictionary<RoomNode, int> distances = new Dictionary<RoomNode, int>();
+
+        queue.Enqueue(start);
+        distances[start] = 0;
+
+        while (queue.Count > 0)
+        {
+            RoomNode current = queue.Dequeue();
+            int currentDistance = distances[current];
+
+            foreach (RoomNode connected in current.connections.Values)
+            {
+                if (distances.ContainsKey(connected))
+                    continue;
+
+                distances[connected] = currentDistance + 1;
+                queue.Enqueue(connected);
+            }
+        }
+
+        return distances;
     }
 
     // Adds optional extra connections between rooms that are already neighbours.
     //
     // This creates loops in the dungeon so the layout is less linear.
-    private void AddOptionalLoops(Dictionary<Vector2Int, RoomNode> map)
+    //
+    // Important:
+    // The boss room is skipped.
+    // Rooms are also prevented from making new loop connections into the boss room.
+    //
+    // This keeps the boss room as a single-entrance room.
+    private void AddOptionalLoops(Dictionary<Vector2Int, RoomNode> map, RoomNode bossRoom)
     {
         foreach (RoomNode room in map.Values)
         {
+            if (room == null)
+                continue;
+
             // Do not add extra connections from the boss room.
-            // This keeps the boss room as a single-entrance room.
-            if (room.isBoss)
+            if (room == bossRoom)
                 continue;
 
             foreach (Direction direction in DirectionUtility.AllDirections)
@@ -405,8 +461,8 @@ public class DungeonGenerator : MonoBehaviour
                 if (!map.TryGetValue(neighborPos, out RoomNode neighbor))
                     continue;
 
-                // Do not add extra connections to the boss room.
-                if (neighbor.isBoss)
+                // Do not add extra connections into the boss room.
+                if (neighbor == bossRoom)
                     continue;
 
                 Direction opposite = DirectionUtility.Opposite(direction);
@@ -420,47 +476,5 @@ public class DungeonGenerator : MonoBehaviour
                     room.Connect(direction, neighbor);
             }
         }
-    }
-
-    // Finds the room that is the furthest walk-distance from the start room.
-    //
-    // This uses breadth-first search, so it measures path distance through connected rooms,
-    // not just straight-line distance.
-    private RoomNode GetFurthestRoomByPathDistance(RoomNode start)
-    {
-        Queue<RoomNode> queue = new Queue<RoomNode>();
-        Dictionary<RoomNode, int> distances = new Dictionary<RoomNode, int>();
-
-        queue.Enqueue(start);
-        distances[start] = 0;
-
-        RoomNode furthest = start;
-        int furthestDistance = 0;
-
-        while (queue.Count > 0)
-        {
-            RoomNode current = queue.Dequeue();
-            int currentDistance = distances[current];
-
-            // If this room is further away than the current furthest,
-            // make it the new furthest room.
-            if (currentDistance > furthestDistance)
-            {
-                furthestDistance = currentDistance;
-                furthest = current;
-            }
-
-            // Visit every connected room.
-            foreach (RoomNode connected in current.connections.Values)
-            {
-                if (distances.ContainsKey(connected))
-                    continue;
-
-                distances[connected] = currentDistance + 1;
-                queue.Enqueue(connected);
-            }
-        }
-
-        return furthest;
     }
 }

@@ -415,7 +415,7 @@ MonoBehaviour:
   generateOnStart: 1
   startGridPosition: {x: 0, y: 0}
   resetPlayerRotationOnFloorStart: 1
-  nextFloorDelay: 1
+  nextFloorDelay: 0.5
 --- !u!1 &288810177
 GameObject:
   m_ObjectHideFlags: 0
@@ -1233,7 +1233,7 @@ MonoBehaviour:
   priority: 0
   blendDistance: 0
   weight: 1
-  sharedProfile: {fileID: 11400000, guid: 10fc4df2da32a41aaa32d77bc913491c, type: 2}
+  sharedProfile: {fileID: 11400000, guid: ab09877e2e707104187f6f83e2f62510, type: 2}
 --- !u!4 &832575519
 Transform:
   m_ObjectHideFlags: 0
@@ -3228,7 +3228,11 @@ MonoBehaviour:
   - {fileID: 6850454250959251121, guid: a9de7a4e6a148b34fbfab29b1fa716eb, type: 3}
   - {fileID: 3860063631705372038, guid: c099c8f09356b4b408d4a5671c914762, type: 3}
   startRoomPrefab: {fileID: 3860063631705372038, guid: 43417d7f8d763654dae80572a198db6f, type: 3}
-  bossRoomPrefab: {fileID: 5914670136462805655, guid: 080db9c40f4bb8a4a9b3d3a8884189e9, type: 3}
+  bossRoomPrefabs:
+  - {fileID: 3304232857823410987, guid: 95b86c9002a2a8444975692586671f3f, type: 3}
+  - {fileID: 5914670136462805655, guid: 080db9c40f4bb8a4a9b3d3a8884189e9, type: 3}
+  - {fileID: 8001146463155390628, guid: 4fc34237b8e83a245bec751e754102f7, type: 3}
+  - {fileID: 5551308417661387905, guid: 8967b0daef55dba43859cccc371bb805, type: 3}
   dungeonParent: {fileID: 237798212}
   roomOffset: {x: 21, y: 21}
   disableStackedDoorVisuals: 1
@@ -3249,8 +3253,8 @@ MonoBehaviour:
   roomCount: 12
   extraConnectionChance: 0.15
   forceStartRoomFourWay: 1
-  forceBossRoomAboveDungeon: 1
-  bossCountsTowardRoomCount: 1
+  bossRoomSelectionMode: 0
+  minimumBossDistanceFromStart: 2
   maxGenerationSafetySteps: 5000
 --- !u!4 &1809704393
 Transform:

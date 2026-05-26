@@ -1384,6 +1384,7 @@ MonoBehaviour:
   direction: 1
   openAngle: 90
   openSpeed: 4
+  invertSwing: 0
 --- !u!1 &2820500840477307334
 GameObject:
   m_ObjectHideFlags: 0
@@ -3151,7 +3152,7 @@ GameObject:
   - component: {fileID: 948362687757737815}
   - component: {fileID: 4055510713350441128}
   m_Layer: 0
-  m_Name: Boss Room
+  m_Name: Boss Room Down
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -3189,7 +3190,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 727adc937d738f94a8e7480fcf4fd73c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  bossDoorIndicator: {fileID: 0}
+  bossDoorIndicator: {fileID: 6553204866852456818}
   isBossRoom: 1
   enemySpawnPoints: []
   upDoor: {fileID: 0}
@@ -3509,7 +3510,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 6553204866852456818}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: dc42784cf147c0c48a680349fa168899, type: 3}
   m_Name: 
