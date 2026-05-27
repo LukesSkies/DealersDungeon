@@ -5,7 +5,7 @@ public class DiscordButton : MonoBehaviour
 {
     [Header("Discord Link")]
     [Tooltip("Put your Discord invite link here.")]
-    [SerializeField] private string discordInviteURL = "https://discord.gg/2g4r3ZC3h2";
+    [SerializeField] private string discordInviteURL = "https://discord.gg/JhTryYxMQe";
 
     [Header("Button Reference")]
     [Tooltip("Optional. If left empty, this script will try to find a Button on this GameObject.")]
