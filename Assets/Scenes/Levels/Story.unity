@@ -4799,11 +4799,11 @@ RectTransform:
   - {fileID: 433494625}
   m_Father: {fileID: 1483175937}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 1, y: 0}
-  m_AnchorMax: {x: 1, y: 0}
-  m_AnchoredPosition: {x: -10, y: 10}
+  m_AnchorMin: {x: 1, y: 1}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: -10, y: -10}
   m_SizeDelta: {x: 100, y: 100}
-  m_Pivot: {x: 1, y: 0}
+  m_Pivot: {x: 1, y: 1}
 --- !u!114 &2100366160
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4817,14 +4817,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
-  m_Color: {r: 0, g: 0, b: 0, a: 1}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_Sprite: {fileID: 0}
+  m_Sprite: {fileID: 21300000, guid: f1e0b1257405dc74ca666208cff3c77d, type: 3}
   m_Type: 0
   m_PreserveAspect: 0
   m_FillCenter: 1
@@ -4858,12 +4858,12 @@ MonoBehaviour:
   roomPrefab: {fileID: 7679165652047767697, guid: e843dd93596cd264b98d9c8f7ed186d9, type: 3}
   playerArrow: {fileID: 1814300584}
   bossRoomIcon: {fileID: 21300000, guid: 5098525cfa422e24d8a8bdf0b01acbf6, type: 3}
-  roomSize: {x: 25, y: 25}
-  roomSpacing: 25
+  roomSize: {x: 20, y: 20}
+  roomSpacing: 20
   revealedButUnvisitedColour: {r: 0.35, g: 0.35, b: 0.35, a: 1}
   visitedColour: {r: 1, g: 1, b: 1, a: 1}
   startRoomColour: {r: 0.2, g: 0.8, b: 1, a: 1}
-  playerArrowSize: {x: 20, y: 20}
+  playerArrowSize: {x: 15, y: 15}
   playerArrowVisualOffset: {x: 0, y: 0}
   playerArrowRotationOffset: 90
   debugArrowMovement: 0

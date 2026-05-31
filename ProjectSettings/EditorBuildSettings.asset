@@ -6,8 +6,17 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Scenes/Menus/MainMenu.unity
+    guid: 1fb7d8713ea779b4487e41f12938cdae
+  - enabled: 1
+    path: Assets/Scenes/Levels/Tutorial.unity
+    guid: d1361f16ae1404d42ae7a814639f7e8c
+  - enabled: 1
     path: Assets/Scenes/Levels/Story.unity
     guid: 99c9720ab356a0642a771bea13969a05
+  - enabled: 1
+    path: Assets/Scenes/Levels/Infintie Dungeon.unity
+    guid: a9c3d184fc6c32440b9c86256e4c26ec
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0
