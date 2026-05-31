@@ -1,29 +1,23 @@
 using System;
 
-// This represents an effect currently active on an enemy.
+// Runtime copy of a CardEffect that is currently active on an enemy.
 [Serializable]
 public class ActiveEffect
 {
-    // The type of effect currently active.
     public EffectType type;
-
-    // The effect value.
-    //
-    // For Poison/Burn/Bleed, this is usually damage per tick.
-    // For other effects, this can mean different things depending on the effect.
     public int value;
-
-    // How many turns/duration this effect has left.
+    public int secondaryValue;
     public int duration;
+    public int stacks;
+    public CardDamageType damageType;
 
-    // Creates an ActiveEffect from a CardEffect.
-    //
-    // This copies the important runtime data from the card effect
-    // into the enemy's active effect list.
-    public ActiveEffect(CardEffect effect)
+    public ActiveEffect(CardEffect effect, float sourceCardManaCost)
     {
         type = effect.effectType;
         value = effect.value;
-        duration = effect.duration;
+        secondaryValue = effect.secondaryValue;
+        duration = effect.GetRolledDuration(sourceCardManaCost);
+        stacks = 1;
+        damageType = effect.damageType;
     }
 }

@@ -99,12 +99,15 @@ public class Enemy : MonoBehaviour
     // HasEffect(EffectType.Poison)
     public bool HasEffect(EffectType type)
     {
-        return activeEffects.Exists(e => e.type == type);
+        return activeEffects.Exists(e => e.type == type && e.duration != 0);
     }
 
     // Damages the enemy.
     public void TakeDamage(int amount)
     {
+        if (amount <= 0)
+            return;
+
         // Subtract HP.
         currentHP -= amount;
 
@@ -121,29 +124,54 @@ public class Enemy : MonoBehaviour
 
     // Applies a card effect to this enemy.
     //
+    // This version exists so older code can still call:
+    // enemy.ApplyEffect(effect);
+    public void ApplyEffect(CardEffect effect)
+    {
+        ApplyEffect(effect, 0f);
+    }
+
+    // Applies a card effect to this enemy.
+    //
+    // sourceCardManaCost is used by effects such as Burn,
+    // where duration can depend on the card's mana cost.
+    //
     // If the enemy already has the same effect:
     // - duration is increased
     // - value becomes whichever value is higher
+    // - stacks increases
     //
     // If the enemy does not have the effect:
     // - a new ActiveEffect is added
-    public void ApplyEffect(CardEffect effect)
+    public void ApplyEffect(CardEffect effect, float sourceCardManaCost)
     {
+        if (effect == null || effect.effectType == EffectType.None)
+            return;
+
         // Try to find an existing effect of the same type.
         ActiveEffect existing = activeEffects.Find(e => e.type == effect.effectType);
 
         if (existing != null)
         {
-            // Add more duration to the existing effect.
-            existing.duration += effect.duration;
+            int rolledDuration = effect.GetRolledDuration(sourceCardManaCost);
 
-            // Keep the strongest value.
+            // Add more duration to the existing effect.
+            existing.duration += rolledDuration;
+
+            // Keep the strongest values.
             existing.value = Mathf.Max(existing.value, effect.value);
+            existing.secondaryValue = Mathf.Max(existing.secondaryValue, effect.secondaryValue);
+
+            // Increase stacks.
+            existing.stacks++;
+
+            // Keep damage type updated.
+            existing.damageType = effect.damageType;
         }
         else
         {
             // Add the effect as a new active effect.
-            activeEffects.Add(new ActiveEffect(effect));
+            activeEffects.Add(new ActiveEffect(effect, sourceCardManaCost));
         }
 
         // Rebuild the effect icon UI.
@@ -165,7 +193,7 @@ public class Enemy : MonoBehaviour
             Destroy(child.gameObject);
 
         // Create a new icon for every active effect.
-        foreach (var effect in activeEffects)
+        foreach (ActiveEffect effect in activeEffects)
         {
             // Spawn an effect icon UI object.
             GameObject obj = Instantiate(effectIconPrefab, effectContainer);
@@ -173,8 +201,11 @@ public class Enemy : MonoBehaviour
             // Get the icon UI script.
             EffectIconUI ui = obj.GetComponent<EffectIconUI>();
 
-            // Set icon sprite and duration text.
-            ui.Setup(effectDatabase.GetIcon(effect.type), effect.duration);
+            if (ui != null)
+            {
+                // Set icon sprite and duration text.
+                ui.Setup(effectDatabase.GetIcon(effect.type), effect.duration);
+            }
 
             // Start at zero scale for a small pop-in animation.
             obj.transform.localScale = Vector3.zero;
@@ -190,6 +221,9 @@ public class Enemy : MonoBehaviour
     // Arranges the active effect icons.
     private void ArrangeEffects()
     {
+        if (effectContainer == null)
+            return;
+
         // Use spline layout if enabled and assigned.
         if (useSplineLayout && splineContainer != null)
         {
@@ -235,24 +269,27 @@ public class Enemy : MonoBehaviour
     // then all effects lose 1 duration.
     public void ProcessEffects()
     {
-        foreach (var effect in activeEffects)
+        for (int i = activeEffects.Count - 1; i >= 0; i--)
         {
+            ActiveEffect effect = activeEffects[i];
+
             switch (effect.type)
             {
                 // These effects deal damage every time effects are processed.
                 case EffectType.Poison:
                 case EffectType.Burn:
                 case EffectType.Bleed:
-                    TakeDamage(effect.value);
+                    TakeDamage(Mathf.Max(1, effect.value) * Mathf.Max(1, effect.stacks));
                     break;
             }
 
             // Reduce duration after processing.
             effect.duration--;
-        }
 
-        // Remove expired effects.
-        activeEffects.RemoveAll(e => e.duration <= 0);
+            // Remove expired effects.
+            if (effect.duration <= 0)
+                activeEffects.RemoveAt(i);
+        }
 
         // Refresh icons after effects changed.
         RebuildEffectUI();
@@ -266,7 +303,8 @@ public class Enemy : MonoBehaviour
             return;
 
         // Damage the player.
-        PlayerHealth.Instance.TakeDamage(attackDamage);
+        if (PlayerHealth.Instance != null)
+            PlayerHealth.Instance.TakeDamage(attackDamage);
     }
 
     // Gives this enemy a chance to flee.
