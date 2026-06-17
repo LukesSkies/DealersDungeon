@@ -411,12 +411,26 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   generator: {fileID: 1809704392}
-  spawner: {fileID: 1809704391}
+  dungeonSpawner: {fileID: 1809704391}
+  enemySpawner: {fileID: 1110356775}
   player: {fileID: 5728895702301873605}
   generateOnStart: 1
   startGridPosition: {x: 0, y: 0}
   resetPlayerRotationOnFloorStart: 1
+  startingFloor: 1
+  currentFloor: 1
+  enemyHealthIncreasePerFloor: 2
+  enemyDamageIncreaseEveryOtherFloor: 2
+  floor1To2MinEnemies: 1
+  floor1To2MaxEnemies: 3
+  floor3To5MinEnemies: 2
+  floor3To5MaxEnemies: 3
+  floor6To8MinEnemies: 2
+  floor6To8MaxEnemies: 4
+  floor9PlusMinEnemies: 3
+  floor9PlusMaxEnemies: 5
   nextFloorDelay: 0.5
+  floorText: {fileID: 0}
 --- !u!1 &288810177
 GameObject:
   m_ObjectHideFlags: 0
@@ -1799,7 +1813,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 280, y: -33}
+  m_AnchoredPosition: {x: 300, y: -33}
   m_SizeDelta: {x: 212.1021, y: 34.2968}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &976519424
@@ -2205,6 +2219,31 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   enemyPrefab: {fileID: 4748722194434373594, guid: 596199a480377484e92c1a5c5b870a21, type: 3}
+  physicalEnemyPrefab: {fileID: 4748722194434373594, guid: 596199a480377484e92c1a5c5b870a21, type: 3}
+  weakPhysicalEnemyPrefab: {fileID: 4297314114416740918, guid: 13b9a19a485624f48ab84261215aa598, type: 3}
+  supportShieldCasterPrefab: {fileID: 7761644704143694356, guid: a1ee488b923cbfd43a6fc8d9393f39ee, type: 3}
+  bossEnemyPrefab: {fileID: 7224246981128824771, guid: d6cf9b05448b3e04d8f40f1a163ab435, type: 3}
+  bossSpawnRules:
+  - bossId: 
+    bossName: Old Rusteed Knight
+    bossPrefab: {fileID: 7224246981128824771, guid: fd84ca7acd810594aa997b514b34e486, type: 3}
+    floorA: 1
+    floorB: 2
+    chanceToUseFloorA: 0.5
+    selectionWeight: 0.01
+  - bossId: 
+    bossName: Flora
+    bossPrefab: {fileID: 7224246981128824771, guid: 5bb4468b603338b45986ad13b970aa46, type: 3}
+    floorA: 1
+    floorB: 2
+    chanceToUseFloorA: 0.5
+    selectionWeight: 0.01
+  minNormalEnemies: 1
+  maxNormalEnemies: 3
+  supportEnemyChance: 0.25
+  weakEnemyChance: 0.35
+  spawnBossOnly: 1
+  bossMinionCount: 2
   enemyCount: 5
   startPosition: {x: 0, y: 1.125, z: 0}
   layouts:
@@ -2281,8 +2320,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0.25}
   m_AnchorMax: {x: 1, y: 0.75}
-  m_AnchoredPosition: {x: -5, y: 0}
-  m_SizeDelta: {x: -20, y: 0}
+  m_AnchoredPosition: {x: 2.5, y: 0}
+  m_SizeDelta: {x: -5, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &1176583557
 GameObject:
@@ -4955,6 +4994,26 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 2879487046761045816, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: 'deck.Array.data[0]'
+      value: 
+      objectReference: {fileID: 11400000, guid: 6d6b5ca488d74e648b68c31906bcd5ce, type: 2}
+    - target: {fileID: 2879487046761045816, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: 'deck.Array.data[1]'
+      value: 
+      objectReference: {fileID: 11400000, guid: 0fc62ec93bf012844aec5245ff202d3f, type: 2}
+    - target: {fileID: 2879487046761045816, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: 'deck.Array.data[2]'
+      value: 
+      objectReference: {fileID: 11400000, guid: f5c8f0b75f34dfc4cae304a971b40286, type: 2}
+    - target: {fileID: 2879487046761045816, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: 'deck.Array.data[3]'
+      value: 
+      objectReference: {fileID: 11400000, guid: c91c64621b43d6c4881b4d2bf31eb0cc, type: 2}
+    - target: {fileID: 2879487046761045816, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: 'deck.Array.data[4]'
+      value: 
+      objectReference: {fileID: 11400000, guid: 5f7218b348ba59f43af5b3f7971c9744, type: 2}
     - target: {fileID: 6992374872261546851, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
       propertyPath: manaText
       value: 
@@ -4967,9 +5026,37 @@ PrefabInstance:
       propertyPath: hpSlider
       value: 
       objectReference: {fileID: 995955764}
+    - target: {fileID: 7644786250905806333, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: -1.75
+      objectReference: {fileID: 0}
+    - target: {fileID: 7644786250905806333, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 7717607530920076407, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
       propertyPath: m_Name
       value: Player
+      objectReference: {fileID: 0}
+    - target: {fileID: 8223532392487958609, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8223532392487958609, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 9042729694857129585, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 9042729694857129585, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 9042729694857129585, guid: 0878c9a80a7790d44b1e9e6935bed572, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

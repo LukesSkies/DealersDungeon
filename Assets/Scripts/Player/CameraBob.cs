@@ -1,34 +1,30 @@
 using UnityEngine;
 
-// This script adds a simple walking bob to the camera.
-//
-// PlayerController starts the bob when moving between rooms.
-// PlayerController stops the bob when arriving.
+// Adds a simple walking bob to the camera.
 public class CameraBob : MonoBehaviour
 {
     [Header("Bob Settings")]
 
-    // How high/low the camera moves while bobbing.
+    // How far the camera moves up and down.
     public float bobAmount = 0.1f;
 
-    // How fast the bob animation moves.
+    // How fast the bob moves.
     public float bobSpeed = 8f;
 
-    // Internal timer used for the sine wave.
+    // Bob timer.
     private float timer;
 
-    // True while the player is walking.
+    // True while walking.
     private bool walking;
 
     private void Update()
     {
-        // If the game is over, stop bobbing and return camera to normal position.
         if (GameManager.Instance != null && GameManager.Instance.IsGameOver())
         {
             StopWalking();
         }
 
-        // If not walking, smoothly return the camera to its original local position.
+        // Return camera to normal when not walking.
         if (!walking)
         {
             transform.localPosition = Vector3.Lerp(
@@ -40,23 +36,20 @@ public class CameraBob : MonoBehaviour
             return;
         }
 
-        // Advance bob timer.
         timer += Time.deltaTime * bobSpeed;
 
-        // Calculate up/down bob using a sine wave.
         float y = Mathf.Sin(timer) * bobAmount;
 
-        // Apply local camera bob.
         transform.localPosition = new Vector3(0f, y, 0f);
     }
 
-    // Starts the walking bob.
+    // Starts camera bob.
     public void StartWalking()
     {
         walking = true;
     }
 
-    // Stops the walking bob.
+    // Stops camera bob.
     public void StopWalking()
     {
         walking = false;

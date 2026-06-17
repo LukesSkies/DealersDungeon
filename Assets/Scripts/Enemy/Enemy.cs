@@ -1,342 +1,420 @@
-﻿using UnityEngine;
+﻿using System.Collections.Generic;
 using TMPro;
-using System.Collections.Generic;
-using DG.Tweening;
-using UnityEngine.Splines;
+using UnityEngine;
 
-// This script controls one enemy.
-//
-// It handles:
-// - HP
-// - taking damage
-// - dying
-// - attacking the player
-// - status effects
-// - effect icons
-// - boss flag
+// Main role used by enemy AI.
+public enum EnemyRole
+{
+    PhysicalAttacker,
+    WeakPhysicalAttacker,
+    SupportShieldCaster,
+    Boss
+}
+
+// Controls one enemy.
+[RequireComponent(typeof(EnemyStatusController))]
 public class Enemy : MonoBehaviour
 {
     [Header("Stats")]
-
-    // The enemy's maximum HP.
     public int maxHP = 10;
-
-    // The enemy's current HP.
     private int currentHP;
 
-    [Header("UI")]
+    [Header("Shield")]
+    [SerializeField] private int currentShield = 0;
+    [SerializeField] private TMP_Text shieldText;
 
-    // Text that displays this enemy's HP.
+    [Header("UI")]
     [SerializeField] private TMP_Text hpText;
 
     [Header("Combat")]
-
-    // Damage this enemy deals when it attacks the player.
     public int attackDamage = 2;
-
-    // True if this enemy is a boss.
-    //
-    // Bosses cannot flee.
     public bool isBoss = false;
 
-    [Header("Effects UI")]
+    [Header("Role")]
+    [SerializeField] private EnemyRole role = EnemyRole.PhysicalAttacker;
 
-    // Parent object where effect icons are created.
-    [SerializeField] private Transform effectContainer;
+    [Header("Floor Scaling")]
+    [SerializeField] private float healthBonusMultiplier = 1f;
+    [SerializeField] private float damageBonusMultiplier = 1f;
 
-    // Prefab used to display one active effect icon.
-    //
-    // This prefab should have EffectIconUI on it.
-    [SerializeField] private GameObject effectIconPrefab;
+    [Header("Support Shield Caster AI")]
+    [SerializeField] private int shieldAmount = 3;
 
-    // Database used to find the correct sprite for each effect type.
-    [SerializeField] private EffectDatabase effectDatabase;
+    [Range(0f, 1f)]
+    [SerializeField] private float shieldCastChance = 0.45f;
 
-    [Header("Optional Layout")]
+    [SerializeField] private bool canShieldSelf = true;
+    [SerializeField] private bool canShieldOthers = true;
 
-    // If true, effect icons are arranged along a spline.
-    //
-    // If false, they are arranged in a simple line.
-    [SerializeField] private bool useSplineLayout = false;
+    [Range(0f, 1f)]
+    [SerializeField] private float shieldOtherChance = 0.65f;
 
-    // Optional spline used for arranging effect icons.
-    [SerializeField] private SplineContainer splineContainer;
+    [SerializeField] private int maxShieldBeforeSkippingShield = 6;
 
-    // List of effects currently active on this enemy.
-    //
-    // Example:
-    // Poison for 3 turns.
-    // Stun for 1 turn.
-    // Burn for 2 turns.
-    private List<ActiveEffect> activeEffects = new List<ActiveEffect>();
+    private EnemyStatusController statusController;
+    private BossMechanic bossMechanic;
+
+    private void Awake()
+    {
+        statusController = EnemyStatusController.GetOrAdd(this);
+        bossMechanic = GetComponent<BossMechanic>();
+    }
 
     private void Start()
     {
-        // Start the enemy at full HP.
-        currentHP = maxHP;
+        if (currentHP <= 0)
+            currentHP = maxHP;
+        else
+            currentHP = Mathf.Clamp(currentHP, 0, maxHP);
 
-        // Register this enemy with the EnemyManager.
-        //
-        // EnemyManager needs to know how many enemies are alive.
+        if (role == EnemyRole.Boss)
+            isBoss = true;
+
+        if (isBoss && bossMechanic == null)
+            bossMechanic = GetComponent<BossMechanic>();
+
         EnemyManager.Instance?.RegisterEnemy(this);
 
-        // Build the effect icon lookup if an effect database is assigned.
-        effectDatabase?.Init();
-
-        // Show starting HP.
         UpdateUI();
     }
 
-    // Returns the enemy's current HP.
+    public void SetRole(EnemyRole newRole)
+    {
+        role = newRole;
+
+        if (role == EnemyRole.Boss)
+            isBoss = true;
+    }
+
+    public void ApplyFloorScaling(int floorNumber, int healthBonus, int damageBonus)
+    {
+        floorNumber = Mathf.Max(1, floorNumber);
+
+        int finalHealthBonus = Mathf.RoundToInt(healthBonus * Mathf.Max(0f, healthBonusMultiplier));
+        int finalDamageBonus = Mathf.RoundToInt(damageBonus * Mathf.Max(0f, damageBonusMultiplier));
+
+        maxHP += finalHealthBonus;
+        attackDamage += finalDamageBonus;
+
+        maxHP = Mathf.Max(1, maxHP);
+        attackDamage = Mathf.Max(0, attackDamage);
+
+        currentHP = maxHP;
+
+        UpdateUI();
+    }
+
     public int GetCurrentHP()
     {
         return currentHP;
     }
 
-    // Checks whether this enemy currently has a specific effect.
-    //
-    // Example:
-    // HasEffect(EffectType.Poison)
-    public bool HasEffect(EffectType type)
+    public int GetCurrentShield()
     {
-        return activeEffects.Exists(e => e.type == type && e.duration != 0);
+        return currentShield;
     }
 
-    // Damages the enemy.
-    public void TakeDamage(int amount)
+    public EnemyRole GetRole()
+    {
+        return role;
+    }
+
+    public bool HasEffect(EffectType type)
+    {
+        if (statusController == null)
+            statusController = EnemyStatusController.GetOrAdd(this);
+
+        return statusController != null && statusController.HasEffect(type);
+    }
+
+    public void AddShield(int amount)
     {
         if (amount <= 0)
             return;
 
-        // Subtract HP.
-        currentHP -= amount;
+        currentShield += amount;
 
-        // Keep HP between 0 and maxHP.
-        currentHP = Mathf.Clamp(currentHP, 0, maxHP);
-
-        // Refresh HP text.
         UpdateUI();
-
-        // Die if HP reaches 0.
-        if (currentHP <= 0)
-            Die();
     }
 
-    // Applies a card effect to this enemy.
-    //
-    // This version exists so older code can still call:
-    // enemy.ApplyEffect(effect);
+    public void ClearShield()
+    {
+        currentShield = 0;
+        UpdateUI();
+    }
+
+    public void Heal(int amount)
+    {
+        if (amount <= 0)
+            return;
+
+        if (currentHP <= 0)
+            return;
+
+        currentHP += amount;
+        currentHP = Mathf.Clamp(currentHP, 0, maxHP);
+
+        UpdateUI();
+    }
+
+    public void TakeDamage(int amount)
+    {
+        TakeDamage(amount, CardDamageType.True, true);
+    }
+
+    public int TakeDamage(int amount, CardDamageType damageType, bool ignoreShield)
+    {
+        if (amount <= 0 || currentHP <= 0)
+            return 0;
+
+        if (statusController == null)
+            statusController = EnemyStatusController.GetOrAdd(this);
+
+        if (bossMechanic == null)
+            bossMechanic = GetComponent<BossMechanic>();
+
+        int remainingDamage = amount;
+
+        bool trueDamage = ignoreShield || damageType == CardDamageType.True;
+
+        if (statusController != null)
+        {
+            remainingDamage = statusController.ModifyIncomingDamage(
+                this,
+                remainingDamage,
+                damageType,
+                trueDamage
+            );
+        }
+
+        if (bossMechanic != null)
+        {
+            remainingDamage = bossMechanic.ModifyIncomingDamage(
+                this,
+                remainingDamage,
+                damageType,
+                trueDamage
+            );
+        }
+
+        remainingDamage = Mathf.Max(0, remainingDamage);
+
+        bool exposed = HasEffect(EffectType.Exposed);
+
+        if (!trueDamage && !exposed && currentShield > 0)
+        {
+            int blocked = Mathf.Min(currentShield, remainingDamage);
+            currentShield -= blocked;
+            remainingDamage -= blocked;
+        }
+
+        int beforeHP = currentHP;
+
+        if (remainingDamage > 0)
+            currentHP -= remainingDamage;
+
+        currentHP = Mathf.Clamp(currentHP, 0, maxHP);
+
+        int damageDealtToHP = Mathf.Max(0, beforeHP - currentHP);
+
+        if (damageDealtToHP > 0 && statusController != null)
+            statusController.NotifyDamaged(this, damageDealtToHP);
+
+        UpdateUI();
+
+        if (currentHP <= 0)
+            Die();
+
+        return damageDealtToHP;
+    }
+
     public void ApplyEffect(CardEffect effect)
     {
         ApplyEffect(effect, 0f);
     }
 
-    // Applies a card effect to this enemy.
-    //
-    // sourceCardManaCost is used by effects such as Burn,
-    // where duration can depend on the card's mana cost.
-    //
-    // If the enemy already has the same effect:
-    // - duration is increased
-    // - value becomes whichever value is higher
-    // - stacks increases
-    //
-    // If the enemy does not have the effect:
-    // - a new ActiveEffect is added
     public void ApplyEffect(CardEffect effect, float sourceCardManaCost)
     {
-        if (effect == null || effect.effectType == EffectType.None)
+        if (effect == null)
             return;
 
-        // Try to find an existing effect of the same type.
-        ActiveEffect existing = activeEffects.Find(e => e.type == effect.effectType);
+        if (statusController == null)
+            statusController = EnemyStatusController.GetOrAdd(this);
 
-        if (existing != null)
-        {
-            int rolledDuration = effect.GetRolledDuration(sourceCardManaCost);
-
-            // Add more duration to the existing effect.
-            existing.duration += rolledDuration;
-
-            // Keep the strongest values.
-            existing.value = Mathf.Max(existing.value, effect.value);
-            existing.secondaryValue = Mathf.Max(existing.secondaryValue, effect.secondaryValue);
-
-            // Increase stacks.
-            existing.stacks++;
-
-            // Keep damage type updated.
-            existing.damageType = effect.damageType;
-        }
-        else
-        {
-            // Add the effect as a new active effect.
-            activeEffects.Add(new ActiveEffect(effect, sourceCardManaCost));
-        }
-
-        // Rebuild the effect icon UI.
-        RebuildEffectUI();
+        statusController.ApplyEffect(effect, sourceCardManaCost);
     }
 
-    // Rebuilds all effect icons above/on the enemy.
-    private void RebuildEffectUI()
-    {
-        // Stop if any required UI references are missing.
-        if (effectContainer == null || effectIconPrefab == null || effectDatabase == null)
-            return;
-
-        // Sort effects so icons appear in a consistent order.
-        activeEffects.Sort((a, b) => a.type.CompareTo(b.type));
-
-        // Delete old effect icons.
-        foreach (Transform child in effectContainer)
-            Destroy(child.gameObject);
-
-        // Create a new icon for every active effect.
-        foreach (ActiveEffect effect in activeEffects)
-        {
-            // Spawn an effect icon UI object.
-            GameObject obj = Instantiate(effectIconPrefab, effectContainer);
-
-            // Get the icon UI script.
-            EffectIconUI ui = obj.GetComponent<EffectIconUI>();
-
-            if (ui != null)
-            {
-                // Set icon sprite and duration text.
-                ui.Setup(effectDatabase.GetIcon(effect.type), effect.duration);
-            }
-
-            // Start at zero scale for a small pop-in animation.
-            obj.transform.localScale = Vector3.zero;
-
-            // Animate the icon appearing.
-            obj.transform.DOScale(1f, 0.15f);
-        }
-
-        // Position the effect icons.
-        ArrangeEffects();
-    }
-
-    // Arranges the active effect icons.
-    private void ArrangeEffects()
-    {
-        if (effectContainer == null)
-            return;
-
-        // Use spline layout if enabled and assigned.
-        if (useSplineLayout && splineContainer != null)
-        {
-            Spline spline = splineContainer.Spline;
-
-            // Width of the section of the spline used for effects.
-            float width = 0.8f;
-
-            // Space icons evenly across the width.
-            float spacing = activeEffects.Count <= 1 ? 0 : width / (activeEffects.Count - 1);
-
-            for (int i = 0; i < effectContainer.childCount; i++)
-            {
-                // Calculate spline position.
-                float t = 0.5f - width / 2f + spacing * i;
-
-                Vector3 localPos = spline.EvaluatePosition(t);
-                Vector3 worldPos = splineContainer.transform.TransformPoint(localPos);
-
-                // Move icon to the spline position.
-                effectContainer.GetChild(i).position = worldPos;
-            }
-        }
-        else
-        {
-            // Simple fallback layout:
-            // place icons in a horizontal line.
-            float spacing = 0.5f;
-
-            for (int i = 0; i < effectContainer.childCount; i++)
-            {
-                Transform child = effectContainer.GetChild(i);
-                child.localPosition = new Vector3(i * spacing, 0f, 0f);
-            }
-        }
-    }
-
-    // Processes active effects.
-    //
-    // HandManager calls this during the enemy turn.
-    //
-    // Damage-over-time effects deal damage here,
-    // then all effects lose 1 duration.
     public void ProcessEffects()
     {
-        for (int i = activeEffects.Count - 1; i >= 0; i--)
-        {
-            ActiveEffect effect = activeEffects[i];
+        if (statusController == null)
+            statusController = EnemyStatusController.GetOrAdd(this);
 
-            switch (effect.type)
-            {
-                // These effects deal damage every time effects are processed.
-                case EffectType.Poison:
-                case EffectType.Burn:
-                case EffectType.Bleed:
-                    TakeDamage(Mathf.Max(1, effect.value) * Mathf.Max(1, effect.stacks));
-                    break;
-            }
+        if (bossMechanic == null)
+            bossMechanic = GetComponent<BossMechanic>();
 
-            // Reduce duration after processing.
-            effect.duration--;
+        if (bossMechanic != null)
+            bossMechanic.OnEnemyTurnEnd(this);
 
-            // Remove expired effects.
-            if (effect.duration <= 0)
-                activeEffects.RemoveAt(i);
-        }
-
-        // Refresh icons after effects changed.
-        RebuildEffectUI();
+        if (statusController != null)
+            statusController.ProcessTurnEnd(this);
     }
 
-    // Makes this enemy attack the player.
     public void AttackPlayer()
     {
-        // Stunned or sleeping enemies skip their attack.
-        if (HasEffect(EffectType.Stun) || HasEffect(EffectType.Sleep))
+        if (currentHP <= 0)
             return;
 
-        // Damage the player.
+        if (statusController == null)
+            statusController = EnemyStatusController.GetOrAdd(this);
+
+        if (bossMechanic == null)
+            bossMechanic = GetComponent<BossMechanic>();
+
+        if (statusController != null && statusController.TryHandlePreAttack(this))
+            return;
+
+        if (bossMechanic != null && bossMechanic.TryHandleTurnBeforeAttack(this))
+            return;
+
+        if (TryCastShieldInsteadOfAttacking())
+            return;
+
+        int finalDamage = attackDamage;
+
+        if (statusController != null)
+            finalDamage = Mathf.RoundToInt(finalDamage * statusController.GetOutgoingDamageMultiplier());
+
         if (PlayerHealth.Instance != null)
-            PlayerHealth.Instance.TakeDamage(attackDamage);
+            PlayerHealth.Instance.TakeDamage(Mathf.Max(0, finalDamage));
+
+        if (bossMechanic != null)
+            bossMechanic.OnAfterAttack(this);
     }
 
-    // Gives this enemy a chance to flee.
-    //
-    // In this system, fleeing currently means the enemy dies/disappears.
+    private bool TryCastShieldInsteadOfAttacking()
+    {
+        if (role != EnemyRole.SupportShieldCaster)
+            return false;
+
+        if (shieldAmount <= 0)
+            return false;
+
+        if (Random.value > shieldCastChance)
+            return false;
+
+        Enemy shieldTarget = ChooseShieldTarget();
+
+        if (shieldTarget == null)
+            return false;
+
+        if (shieldTarget.GetCurrentShield() >= maxShieldBeforeSkippingShield)
+            return false;
+
+        shieldTarget.AddShield(shieldAmount);
+
+        Debug.Log($"{name} cast Shield on {shieldTarget.name} for {shieldAmount}.");
+
+        return true;
+    }
+
+    private Enemy ChooseShieldTarget()
+    {
+        List<Enemy> enemies = EnemyManager.Instance == null
+            ? new List<Enemy>()
+            : new List<Enemy>(EnemyManager.Instance.GetAllEnemies());
+
+        enemies.RemoveAll(enemy => enemy == null || enemy.GetCurrentHP() <= 0);
+
+        if (enemies.Count == 0)
+            return null;
+
+        bool tryShieldOther = canShieldOthers && Random.value <= shieldOtherChance;
+
+        if (tryShieldOther)
+        {
+            Enemy bestOther = null;
+
+            for (int i = 0; i < enemies.Count; i++)
+            {
+                Enemy enemy = enemies[i];
+
+                if (enemy == this)
+                    continue;
+
+                if (bestOther == null)
+                {
+                    bestOther = enemy;
+                    continue;
+                }
+
+                if (enemy.GetCurrentShield() < bestOther.GetCurrentShield())
+                    bestOther = enemy;
+            }
+
+            if (bestOther != null)
+                return bestOther;
+        }
+
+        if (canShieldSelf)
+            return this;
+
+        for (int i = 0; i < enemies.Count; i++)
+        {
+            if (enemies[i] != this)
+                return enemies[i];
+        }
+
+        return null;
+    }
+
     public void TryFlee(float chance)
     {
-        // Bosses cannot flee.
         if (isBoss)
             return;
 
-        // Random.value returns a number between 0 and 1.
-        //
-        // If it is less than or equal to chance, the enemy flees.
-        if (Random.value <= chance)
+        if (Random.value <= Mathf.Clamp01(chance))
             Die();
     }
 
-    // Updates the enemy HP text.
     private void UpdateUI()
     {
         if (hpText != null)
             hpText.text = $"{currentHP}/{maxHP}";
+
+        if (shieldText != null)
+            shieldText.text = currentShield > 0 ? $"Shield: {currentShield}" : "";
     }
 
-    // Kills this enemy.
     private void Die()
     {
-        // Tell EnemyManager this enemy is gone.
         EnemyManager.Instance?.UnregisterEnemy(this);
-
-        // Destroy the enemy GameObject.
         Destroy(gameObject);
+    }
+
+    private void OnValidate()
+    {
+        if (maxHP < 1)
+            maxHP = 1;
+
+        if (attackDamage < 0)
+            attackDamage = 0;
+
+        if (currentShield < 0)
+            currentShield = 0;
+
+        if (shieldAmount < 0)
+            shieldAmount = 0;
+
+        if (maxShieldBeforeSkippingShield < 0)
+            maxShieldBeforeSkippingShield = 0;
+
+        if (healthBonusMultiplier < 0f)
+            healthBonusMultiplier = 0f;
+
+        if (damageBonusMultiplier < 0f)
+            damageBonusMultiplier = 0f;
+
+        if (role == EnemyRole.Boss)
+            isBoss = true;
     }
 }

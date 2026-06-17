@@ -1,13 +1,15 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-// Attach this to a UI Button when clicking it should open another menu screen.
+// Opens another menu screen when clicked.
 public class MenuOpenScreenButton : MonoBehaviour
 {
     [Header("Button")]
+
     [SerializeField] private Button button;
 
     [Header("Navigation")]
+
     [SerializeField] private MenuScreenId screenToOpen;
 
     private void Awake()
@@ -28,6 +30,7 @@ public class MenuOpenScreenButton : MonoBehaviour
             button.onClick.RemoveListener(OpenScreen);
     }
 
+    // Opens the selected menu screen.
     private void OpenScreen()
     {
         if (MenuNavigator.Instance == null)

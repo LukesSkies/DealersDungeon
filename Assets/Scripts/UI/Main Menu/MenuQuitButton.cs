@@ -5,13 +5,11 @@ using UnityEngine.UI;
 using UnityEditor;
 #endif
 
-// Attach this to the Quit button.
-//
-// In the Unity Editor, it stops Play Mode.
-// In a build, it closes the game.
+// Quits the game when clicked.
 public class MenuQuitButton : MonoBehaviour
 {
     [Header("Button")]
+
     [SerializeField] private Button button;
 
     private void Awake()
@@ -32,6 +30,7 @@ public class MenuQuitButton : MonoBehaviour
             button.onClick.RemoveListener(QuitGame);
     }
 
+    // Quits in build or stops Play Mode in editor.
     private void QuitGame()
     {
 #if UNITY_EDITOR

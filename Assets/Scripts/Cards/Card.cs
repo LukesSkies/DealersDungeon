@@ -1,23 +1,20 @@
-﻿using UnityEngine;
-using DG.Tweening;
+﻿using DG.Tweening;
 using System.Collections.Generic;
 using System.Linq;
+using UnityEngine;
 using UnityEngine.EventSystems;
 
-// Replacement for your Card script.
-// Supports:
-// - tap enemy = basic single attack, gain 1 mana
-// - drag over enemies = split basic attack damage between dragged enemies, gain 0.5 mana
-// - click card = cast unique spell
-// - click card then enemy = targeted spell
-// - target types, conditions, status effects, and card manipulation
+// Controls one combat card.
 public class Card : MonoBehaviour, IPointerClickHandler
 {
     private bool isActive = false;
     private bool isHovered = false;
-    private bool isWaitingForSpellTarget = false;
+    private bool isWaitingForSkillTarget = false;
+    private bool isCastingSkill = false;
 
+    private int lastClickFrame = -1;
     private Vector3 basePosition;
+
     private SpriteRenderer spriteRenderer;
     private MeshRenderer meshRenderer;
     private Color originalColor = Color.white;
@@ -34,9 +31,19 @@ public class Card : MonoBehaviour, IPointerClickHandler
     [Header("Card Data")]
     [SerializeField] private CardData cardData;
 
-    private int temporaryDamageBonus = 0;
-    private int temporaryEffectValueBonus = 0;
+    private int temporaryBasicDamageBonus = 0;
+    private int temporarySkillValueBonus = 0;
     private float temporaryManaCostReduction = 0f;
+
+    private class SkillCastContext
+    {
+        public Enemy chosenTarget;
+        public MiniGameResult miniGameResult;
+        public float manaSpent;
+        public int totalDamageDealt;
+        public int lastDamageDealt;
+        public bool killedEnemy;
+    }
 
     private void Awake()
     {
@@ -76,13 +83,26 @@ public class Card : MonoBehaviour, IPointerClickHandler
 
     public bool IsWaitingForSpellTarget()
     {
-        return isWaitingForSpellTarget;
+        return isWaitingForSkillTarget;
+    }
+
+    public bool IsWaitingForSkillTarget()
+    {
+        return isWaitingForSkillTarget;
     }
 
     public float GetCurrentManaCost()
     {
         if (cardData == null)
             return 0f;
+
+        if (cardData.manaCostMode == CardManaCostMode.AllRemaining)
+        {
+            if (ManaManager.Instance == null)
+                return 0f;
+
+            return Mathf.Max(0f, ManaManager.Instance.currentMana);
+        }
 
         float cost = cardData.manaCost - temporaryManaCostReduction;
 
@@ -97,10 +117,10 @@ public class Card : MonoBehaviour, IPointerClickHandler
         temporaryManaCostReduction += Mathf.Max(0f, reduction);
     }
 
-    public void UpgradeTemporary(int damageBonus, int effectValueBonus)
+    public void UpgradeTemporary(int basicDamageBonus, int skillValueBonus)
     {
-        temporaryDamageBonus += damageBonus;
-        temporaryEffectValueBonus += effectValueBonus;
+        temporaryBasicDamageBonus += basicDamageBonus;
+        temporarySkillValueBonus += skillValueBonus;
     }
 
     public void CopyTemporaryStateFrom(Card other)
@@ -108,8 +128,8 @@ public class Card : MonoBehaviour, IPointerClickHandler
         if (other == null)
             return;
 
-        temporaryDamageBonus = other.temporaryDamageBonus;
-        temporaryEffectValueBonus = other.temporaryEffectValueBonus;
+        temporaryBasicDamageBonus = other.temporaryBasicDamageBonus;
+        temporarySkillValueBonus = other.temporarySkillValueBonus;
         temporaryManaCostReduction = other.temporaryManaCostReduction;
     }
 
@@ -146,17 +166,13 @@ public class Card : MonoBehaviour, IPointerClickHandler
         isActive = active;
 
         if (!active)
-            isWaitingForSpellTarget = false;
+        {
+            isHovered = false;
+            isWaitingForSkillTarget = false;
+            isCastingSkill = false;
+        }
 
-        Color color = active ? originalColor : Color.grey;
-
-        if (isWaitingForSpellTarget)
-            color = Color.yellow;
-
-        if (spriteRenderer != null)
-            spriteRenderer.color = color;
-        else if (meshRenderer != null)
-            meshRenderer.material.color = color;
+        RefreshVisualColor();
 
         transform.DOKill();
         transform.DOScale(active ? activeScale : normalScale, 0.2f);
@@ -166,37 +182,63 @@ public class Card : MonoBehaviour, IPointerClickHandler
     {
         isActive = false;
         isHovered = false;
-        isWaitingForSpellTarget = false;
+        isWaitingForSkillTarget = false;
+        isCastingSkill = false;
 
         transform.DOKill();
         transform.DOScale(normalScale, 0.2f);
         transform.DOMove(basePosition, 0.25f);
 
-        Color usedColor = new Color(0.3f, 0.3f, 0.3f, 0.6f);
-
-        if (spriteRenderer != null)
-            spriteRenderer.color = usedColor;
-        else if (meshRenderer != null)
-            meshRenderer.material.color = usedColor;
+        SetRendererColor(new Color(0.3f, 0.3f, 0.3f, 0.6f));
     }
 
-    // Clicking the card casts its spell, or arms a targeted spell.
+    public void CancelQueuedSpell()
+    {
+        if (!isWaitingForSkillTarget)
+            return;
+
+        isWaitingForSkillTarget = false;
+        RefreshVisualColor();
+    }
+
+    public void CancelQueuedSkill()
+    {
+        CancelQueuedSpell();
+    }
+
     public void Click()
     {
-        if (!isActive || cardData == null)
+        if (lastClickFrame == Time.frameCount)
             return;
 
-        if (!cardData.HasSpell())
+        lastClickFrame = Time.frameCount;
+
+        if (!isActive || cardData == null || isCastingSkill)
             return;
 
-        if (cardData.RequiresEnemyTargetForSpell())
+        if (!cardData.HasSkill())
+            return;
+
+        if (isWaitingForSkillTarget)
         {
-            isWaitingForSpellTarget = true;
-            SetActive(true);
+            CancelQueuedSpell();
             return;
         }
 
-        TryCastSpell(null);
+        if (!CanAffordSkill())
+        {
+            FlashNoMana();
+            return;
+        }
+
+        if (cardData.RequiresEnemyTargetForSkill())
+        {
+            isWaitingForSkillTarget = true;
+            RefreshVisualColor();
+            return;
+        }
+
+        TryCastSkill(null);
     }
 
     public void OnPointerClick(PointerEventData eventData)
@@ -204,54 +246,124 @@ public class Card : MonoBehaviour, IPointerClickHandler
         Click();
     }
 
-    // EnemyTargeting calls this after the player has clicked the card spell and then clicked an enemy.
     public bool TryCastQueuedSpell(Enemy chosenTarget)
     {
-        if (!isActive || !isWaitingForSpellTarget || chosenTarget == null)
-            return false;
-
-        return TryCastSpell(chosenTarget);
+        return TryCastQueuedSkill(chosenTarget);
     }
 
-    private bool TryCastSpell(Enemy chosenTarget)
+    public bool TryCastQueuedSkill(Enemy chosenTarget)
     {
-        if (cardData == null || ManaManager.Instance == null)
+        if (!isActive || !isWaitingForSkillTarget || isCastingSkill)
             return false;
 
-        float cost = GetCurrentManaCost();
+        if (chosenTarget == null)
+        {
+            CancelQueuedSpell();
+            return false;
+        }
 
-        if (cardData.spendManaOnSpellCast && !ManaManager.Instance.TrySpendMana(cost))
+        return TryCastSkill(chosenTarget);
+    }
+
+    private bool TryCastSkill(Enemy chosenTarget)
+    {
+        if (cardData == null || isCastingSkill)
             return false;
 
-        isWaitingForSpellTarget = false;
+        if (cardData.RequiresEnemyTargetForSkill() && chosenTarget == null)
+            return false;
 
-        SpellResult result = ExecuteEffects(chosenTarget);
+        float manaSpent = 0f;
 
-        // This allows a card to have RefundManaOnKill as a later effect.
-        if (result.refundMana > 0f && ManaManager.Instance != null)
-            ManaManager.Instance.AddMana(result.refundMana);
+        if (cardData.spendManaOnSkillCast)
+        {
+            if (ManaManager.Instance == null)
+            {
+                FlashNoMana();
+                return false;
+            }
 
-        HandManager.Instance.UseCurrentCard();
+            if (cardData.manaCostMode == CardManaCostMode.AllRemaining)
+            {
+                if (ManaManager.Instance.currentMana < cardData.minimumManaToCast)
+                {
+                    FlashNoMana();
+                    return false;
+                }
+
+                manaSpent = ManaManager.Instance.SpendAllMana();
+            }
+            else
+            {
+                float cost = GetCurrentManaCost();
+
+                if (!ManaManager.Instance.TrySpendMana(cost))
+                {
+                    FlashNoMana();
+                    return false;
+                }
+
+                manaSpent = cost;
+            }
+        }
+
+        isWaitingForSkillTarget = false;
+        RefreshVisualColor();
+
+        if (cardData.HasMiniGame() && MiniGameManager.Instance != null)
+        {
+            isCastingSkill = true;
+            RefreshVisualColor();
+
+            MiniGameManager.Instance.PlayMiniGameResult(cardData, miniGameResult =>
+            {
+                FinishCastSkill(chosenTarget, miniGameResult, manaSpent);
+            });
+
+            return true;
+        }
+
+        FinishCastSkill(chosenTarget, MiniGameResult.None(), manaSpent);
         return true;
     }
 
-    // Tap enemy = full basic damage to that enemy, gain 1 mana.
-    public void SingleAttack(Enemy target)
+    private void FinishCastSkill(Enemy chosenTarget, MiniGameResult miniGameResult, float manaSpent)
     {
-        if (!isActive || cardData == null || target == null)
+        if (this == null)
             return;
 
-        if (isWaitingForSpellTarget)
+        isCastingSkill = false;
+        RefreshVisualColor();
+
+        SkillCastContext context = new SkillCastContext
         {
-            TryCastQueuedSpell(target);
+            chosenTarget = chosenTarget,
+            miniGameResult = miniGameResult ?? MiniGameResult.None(),
+            manaSpent = manaSpent
+        };
+
+        ExecuteEffects(context);
+
+        if (HandManager.Instance != null)
+            HandManager.Instance.UseCurrentCard();
+    }
+
+    public void SingleAttack(Enemy target)
+    {
+        if (!isActive || cardData == null || target == null || isCastingSkill)
+            return;
+
+        if (isWaitingForSkillTarget)
+        {
+            TryCastQueuedSkill(target);
             return;
         }
 
-        if (!cardData.canTapAttack)
+        if (!cardData.CanTapAttack())
             return;
 
-        int damage = CalculateDamage(cardData.baseDamage + temporaryDamageBonus, cardData.basicAttackDamageType);
-        DealEnemyDamage(target, damage, cardData.basicAttackDamageType, false);
+        int damage = CalculateBasicDamage(cardData.baseDamage + temporaryBasicDamageBonus, cardData.basicAttackDamageType);
+        DealEnemyDamage(target, damage, cardData.basicAttackDamageType, false, null);
 
         if (ManaManager.Instance != null)
         {
@@ -259,10 +371,10 @@ public class Card : MonoBehaviour, IPointerClickHandler
             ManaManager.Instance.AddMana(gain);
         }
 
-        HandManager.Instance.UseCurrentCard();
+        if (HandManager.Instance != null)
+            HandManager.Instance.UseCurrentCard();
     }
 
-    // Backwards-compatible overload. If old code calls MultiAttack(), it hits all enemies.
     public void MultiAttack()
     {
         List<Enemy> enemies = EnemyManager.Instance == null
@@ -272,13 +384,15 @@ public class Card : MonoBehaviour, IPointerClickHandler
         MultiAttack(enemies);
     }
 
-    // Drag = split damage between enemies actually dragged over, gain 0.5 mana.
     public void MultiAttack(List<Enemy> draggedEnemies)
     {
-        if (!isActive || cardData == null || !cardData.canDragAttack)
+        if (!isActive || cardData == null || isCastingSkill)
             return;
 
-        if (isWaitingForSpellTarget)
+        if (isWaitingForSkillTarget)
+            return;
+
+        if (!cardData.CanDragAttack())
             return;
 
         if (draggedEnemies == null)
@@ -292,8 +406,8 @@ public class Card : MonoBehaviour, IPointerClickHandler
         if (draggedEnemies.Count == 0)
             return;
 
-        int totalDamage = CalculateDamage(cardData.baseDamage + temporaryDamageBonus, cardData.basicAttackDamageType);
-        ApplySplitDamage(draggedEnemies, totalDamage, cardData.basicAttackDamageType);
+        int totalDamage = CalculateBasicDamage(cardData.baseDamage + temporaryBasicDamageBonus, cardData.basicAttackDamageType);
+        ApplySplitBasicDamage(draggedEnemies, totalDamage, cardData.basicAttackDamageType);
 
         if (ManaManager.Instance != null)
         {
@@ -301,15 +415,36 @@ public class Card : MonoBehaviour, IPointerClickHandler
             ManaManager.Instance.AddMana(gain);
         }
 
-        HandManager.Instance.UseCurrentCard();
+        if (HandManager.Instance != null)
+            HandManager.Instance.UseCurrentCard();
     }
 
-    private SpellResult ExecuteEffects(Enemy chosenTarget)
+    private bool CanAffordSkill()
     {
-        SpellResult result = new SpellResult();
+        if (cardData == null)
+            return false;
 
-        if (cardData.effects == null)
-            return result;
+        if (!cardData.spendManaOnSkillCast)
+            return true;
+
+        if (ManaManager.Instance == null)
+            return false;
+
+        if (cardData.manaCostMode == CardManaCostMode.AllRemaining)
+            return ManaManager.Instance.currentMana >= cardData.minimumManaToCast;
+
+        float cost = GetCurrentManaCost();
+
+        if (cost <= 0f)
+            return true;
+
+        return ManaManager.Instance.currentMana >= cost;
+    }
+
+    private void ExecuteEffects(SkillCastContext context)
+    {
+        if (cardData == null || cardData.effects == null)
+            return;
 
         for (int i = 0; i < cardData.effects.Count; i++)
         {
@@ -318,16 +453,19 @@ public class Card : MonoBehaviour, IPointerClickHandler
             if (effect == null || effect.effectType == EffectType.None)
                 continue;
 
-            if (UnityEngine.Random.value > effect.chance)
-                continue;
-
             if (IsPlayerEffect(effect.effectType) || IsCardManipulationEffect(effect.effectType))
             {
-                ApplyPlayerOrCardEffect(effect, result);
+                ApplyPlayerOrCardEffect(effect, context);
                 continue;
             }
 
-            List<Enemy> targets = ResolveTargets(effect, chosenTarget);
+            if (effect.effectType == EffectType.RandomHits)
+            {
+                ApplyRandomHits(effect, context);
+                continue;
+            }
+
+            List<Enemy> targets = ResolveTargets(effect, context.chosenTarget);
 
             for (int t = 0; t < targets.Count; t++)
             {
@@ -336,75 +474,49 @@ public class Card : MonoBehaviour, IPointerClickHandler
                 if (enemy == null || enemy.GetCurrentHP() <= 0)
                     continue;
 
-                if (!CheckCondition(effect, enemy))
+                if (!EffectCanHitTarget(effect, enemy))
                     continue;
 
-                int beforeHP = enemy.GetCurrentHP();
-                ApplyEnemyEffect(effect, enemy, targets, result);
-                int afterHP = enemy.GetCurrentHP();
+                float chance = enemy.isBoss ? effect.chance * effect.bossChanceMultiplier : effect.chance;
 
-                result.totalDamageDealt += Mathf.Max(0, beforeHP - afterHP);
+                if (Random.value > Mathf.Clamp01(chance))
+                    continue;
 
-                if (beforeHP > 0 && afterHP <= 0)
-                    result.killedEnemy = true;
-
-                if (effect.removeRequiredStatusAfterUse && effect.requiredStatus != EffectType.None)
-                {
-                    EnemyStatusController controller = EnemyStatusController.Get(enemy);
-                    if (controller != null)
-                        controller.RemoveEffect(effect.requiredStatus);
-                }
+                ApplyEnemyEffect(effect, enemy, context);
             }
         }
-
-        if (result.killedEnemy && result.pendingKillRefund > 0f)
-            result.refundMana += result.pendingKillRefund;
-
-        return result;
     }
 
     private List<Enemy> ResolveTargets(CardEffect effect, Enemy chosenTarget)
     {
-        List<Enemy> enemies = EnemyManager.Instance == null
-            ? new List<Enemy>()
-            : new List<Enemy>(EnemyManager.Instance.GetAllEnemies());
+        CardTargetType targetType = effect.GetTargetType(cardData);
+        List<Enemy> enemies = GetAliveEnemies();
 
-        enemies = enemies.Where(enemy => enemy != null && enemy.GetCurrentHP() > 0).ToList();
-
-        switch (effect.targetType)
+        switch (targetType)
         {
-            case TargetType.None:
-            case TargetType.Self:
-            case TargetType.CurrentCard:
-            case TargetType.PreviousCard:
-            case TargetType.NextCard:
-            case TargetType.RandomCardInHand:
-                return new List<Enemy>();
-
-            case TargetType.SingleEnemy:
+            case CardTargetType.SelectedEnemy:
                 return chosenTarget == null ? new List<Enemy>() : new List<Enemy> { chosenTarget };
 
-            case TargetType.AllEnemies:
-            case TargetType.DraggedEnemies:
-                return enemies;
-
-            case TargetType.RandomEnemy:
+            case CardTargetType.RandomEnemy:
                 return PickRandomEnemies(enemies, 1);
 
-            case TargetType.RandomEnemies:
-                return PickRandomEnemies(enemies, Mathf.Max(1, effect.targetCount));
+            case CardTargetType.RandomNonBossEnemy:
+                return PickRandomEnemies(enemies.Where(enemy => !enemy.isBoss).ToList(), 1);
 
-            case TargetType.LowestHPEnemy:
+            case CardTargetType.LowestHPEnemy:
                 return enemies.OrderBy(enemy => enemy.GetCurrentHP()).Take(1).ToList();
 
-            case TargetType.HighestHPEnemy:
+            case CardTargetType.HighestHPEnemy:
                 return enemies.OrderByDescending(enemy => enemy.GetCurrentHP()).Take(1).ToList();
 
-            case TargetType.EnemyWithStatus:
-                return enemies.Where(enemy => EnemyHasStatus(enemy, effect.requiredStatus)).ToList();
+            case CardTargetType.AdjacentEnemies:
+                return GetAdjacentEnemies(chosenTarget);
 
-            case TargetType.EnemyWithoutStatus:
-                return enemies.Where(enemy => !EnemyHasStatus(enemy, effect.requiredStatus)).ToList();
+            case CardTargetType.AllNonBossEnemies:
+                return enemies.Where(enemy => !enemy.isBoss).ToList();
+
+            case CardTargetType.AllEnemies:
+                return enemies;
         }
 
         return new List<Enemy>();
@@ -417,7 +529,7 @@ public class Card : MonoBehaviour, IPointerClickHandler
 
         while (pool.Count > 0 && result.Count < count)
         {
-            int index = UnityEngine.Random.Range(0, pool.Count);
+            int index = Random.Range(0, pool.Count);
             result.Add(pool[index]);
             pool.RemoveAt(index);
         }
@@ -425,162 +537,303 @@ public class Card : MonoBehaviour, IPointerClickHandler
         return result;
     }
 
-    private bool CheckCondition(CardEffect effect, Enemy enemy)
+    private List<Enemy> GetAdjacentEnemies(Enemy chosenTarget)
     {
-        if (effect == null)
-            return true;
+        if (chosenTarget == null)
+            return new List<Enemy>();
 
-        switch (effect.condition)
-        {
-            case EffectCondition.None:
-                return true;
+        List<Enemy> enemies = GetAliveEnemies()
+            .OrderBy(enemy => enemy.transform.position.x)
+            .ToList();
 
-            case EffectCondition.TargetBelowHalfHP:
-                return enemy.GetCurrentHP() <= enemy.maxHP / 2;
+        int index = enemies.IndexOf(chosenTarget);
+        List<Enemy> result = new List<Enemy>();
 
-            case EffectCondition.TargetAboveHalfHP:
-                return enemy.GetCurrentHP() > enemy.maxHP / 2;
+        if (index > 0)
+            result.Add(enemies[index - 1]);
 
-            case EffectCondition.TargetHasPoison:
-                return EnemyHasStatus(enemy, EffectType.Poison);
+        if (index >= 0 && index < enemies.Count - 1)
+            result.Add(enemies[index + 1]);
 
-            case EffectCondition.TargetHasBurn:
-                return EnemyHasStatus(enemy, EffectType.Burn);
+        return result;
+    }
 
-            case EffectCondition.TargetHasBleed:
-                return EnemyHasStatus(enemy, EffectType.Bleed);
+    private bool EffectCanHitTarget(CardEffect effect, Enemy enemy)
+    {
+        if (enemy == null)
+            return false;
 
-            case EffectCondition.TargetIsStunned:
-                return EnemyHasStatus(enemy, EffectType.Stun);
-
-            case EffectCondition.TargetIsBoss:
-                return enemy.isBoss;
-
-            case EffectCondition.TargetIsNotBoss:
-                return !enemy.isBoss;
-
-            case EffectCondition.TargetHasStatus:
-                return EnemyHasStatus(enemy, effect.requiredStatus);
-
-            case EffectCondition.TargetDoesNotHaveStatus:
-                return !EnemyHasStatus(enemy, effect.requiredStatus);
-
-            case EffectCondition.TargetHasAnyDOT:
-                return EnemyHasAnyDOT(enemy);
-
-            case EffectCondition.TargetHasNoDOT:
-                return !EnemyHasAnyDOT(enemy);
-
-            case EffectCondition.TargetIsAlive:
-                return enemy.GetCurrentHP() > 0;
-
-            case EffectCondition.PlayerHasShield:
-                return PlayerShield.Instance != null && PlayerShield.Instance.currentShield > 0;
-
-            case EffectCondition.PlayerHasNoShield:
-                return PlayerShield.Instance == null || PlayerShield.Instance.currentShield <= 0;
-
-            case EffectCondition.ManaAtLeast:
-                return ManaManager.Instance != null && ManaManager.Instance.currentMana >= effect.requiredMana;
-        }
+        if (enemy.isBoss && !effect.worksOnBosses)
+            return false;
 
         return true;
     }
 
-    private void ApplyEnemyEffect(CardEffect effect, Enemy enemy, List<Enemy> resolvedTargets, SpellResult result)
+    private void ApplyEnemyEffect(CardEffect effect, Enemy enemy, SkillCastContext context)
     {
-        int value = effect.value + temporaryEffectValueBonus;
-
         switch (effect.effectType)
         {
             case EffectType.Damage:
-            case EffectType.AOE:
-                DealEnemyDamage(enemy, CalculateDamage(value, effect.damageType), effect.damageType, false);
-                break;
-
-            case EffectType.SplitDamage:
-                ApplySplitDamage(resolvedTargets, CalculateDamage(value, effect.damageType), effect.damageType);
-                break;
-
-            case EffectType.HalfHP:
-                if (!enemy.isBoss || effect.ignoreBossImmunity)
-                    DealEnemyDamage(enemy, Mathf.Max(1, enemy.GetCurrentHP() / 2), CardDamageType.True, true);
-                break;
-
-            case EffectType.SplashDamage:
-                ApplySplashDamage(enemy, value, effect);
-                break;
-
-            case EffectType.ChainDamage:
-                ApplyChainDamage(enemy, value, effect);
-                break;
-
-            case EffectType.RandomHits:
-                ApplyRandomHits(effect);
-                break;
-
-            case EffectType.MultiHit:
-                ApplyMultiHit(enemy, effect);
+                DealEnemyDamage(enemy, CalculateSkillValue(effect, enemy, context), effect.damageType, false, context);
                 break;
 
             case EffectType.PiercingDamage:
-                DealEnemyDamage(enemy, CalculateDamage(value, effect.damageType), effect.damageType, true);
+                DealEnemyDamage(enemy, CalculateSkillValue(effect, enemy, context), effect.damageType, true, context);
                 break;
 
-            case EffectType.TrueDamage:
-                DealEnemyDamage(enemy, value, CardDamageType.True, true);
+            case EffectType.PercentMissingHPDamage:
+                ApplyPercentMissingHPDamage(effect, enemy, context);
                 break;
 
-            case EffectType.RecoilDamage:
-                DealEnemyDamage(enemy, CalculateDamage(value, effect.damageType), effect.damageType, false);
-                DamagePlayer(effect.secondaryValue > 0 ? effect.secondaryValue : Mathf.CeilToInt(value * 0.25f));
+            case EffectType.PercentMaxHPDamage:
+                ApplyPercentMaxHPDamage(effect, enemy, context);
                 break;
 
-            case EffectType.OverkillDamage:
-                ApplyOverkillDamage(enemy, value, effect);
+            case EffectType.AdjacentSplashDamage:
+                ApplyAdjacentSplashDamage(effect, context);
                 break;
 
-            case EffectType.ExecuteDamage:
-                ApplyExecuteDamage(enemy, value, effect);
+            case EffectType.LifeStealDamage:
+                ApplyLifeStealDamage(effect, enemy, context);
                 break;
 
-            case EffectType.OpeningStrike:
-                ApplyOpeningStrike(enemy, value, effect);
+            case EffectType.AllInDamage:
+                ApplyAllInDamage(effect, enemy, context);
                 break;
 
             case EffectType.Flee:
-                if (!enemy.isBoss || effect.ignoreBossImmunity)
-                    enemy.TryFlee(effect.chance);
+                ApplyFlee(effect, enemy, context);
                 break;
 
-            case EffectType.DetonateDOT:
-            case EffectType.ConsumeDOT:
-                ConsumeDOT(enemy, value);
+            case EffectType.RandomStatus:
+                ApplyRandomStatus(effect, enemy, context);
                 break;
 
-            case EffectType.AmplifyDOT:
-                EnemyStatusController.GetOrAdd(enemy).AmplifyDOTs(Mathf.Max(1, value));
-                break;
-
-            case EffectType.PoisonCloud:
-                ApplyStatus(enemy, EffectType.Poison, value, effect);
-                break;
-
-            case EffectType.BarrierBreak:
             case EffectType.Exposed:
-                ApplyStatus(enemy, effect.effectType, value, effect);
+                enemy.ClearShield();
+                ApplyStatus(effect, enemy, context);
                 break;
 
             default:
-                if (IsEnemyStatus(effect.effectType))
-                    ApplyStatus(enemy, effect.effectType, value, effect);
+                if (EnemyStatusController.IsEnemyStatusEffect(effect.effectType))
+                    ApplyStatus(effect, enemy, context);
                 break;
         }
     }
 
-    private void ApplyPlayerOrCardEffect(CardEffect effect, SpellResult result)
+    private void ApplyRandomHits(CardEffect effect, SkillCastContext context)
     {
-        int value = effect.value + temporaryEffectValueBonus;
+        int hits = effect.GetHitCount();
+
+        for (int i = 0; i < hits; i++)
+        {
+            List<Enemy> enemies = GetAliveEnemies();
+
+            if (enemies.Count == 0)
+                return;
+
+            Enemy enemy = enemies[Random.Range(0, enemies.Count)];
+
+            if (!EffectCanHitTarget(effect, enemy))
+                continue;
+
+            float chance = enemy.isBoss ? effect.chance * effect.bossChanceMultiplier : effect.chance;
+
+            if (Random.value > Mathf.Clamp01(chance))
+                continue;
+
+            int value = CalculateSkillValue(effect, enemy, context);
+            DealEnemyDamage(enemy, value, effect.damageType, false, context);
+            TryApplyStatusOnHit(effect, enemy);
+        }
+    }
+
+    private void TryApplyStatusOnHit(CardEffect effect, Enemy enemy)
+    {
+        if (effect == null || enemy == null)
+            return;
+
+        if (effect.statusAppliedOnHit == EffectType.None)
+            return;
+
+        if (!EnemyStatusController.IsEnemyStatusEffect(effect.statusAppliedOnHit))
+            return;
+
+        if (enemy.isBoss && !effect.statusWorksOnBosses)
+            return;
+
+        float chance = enemy.isBoss
+            ? effect.statusChanceOnHit * effect.statusBossChanceMultiplier
+            : effect.statusChanceOnHit;
+
+        if (Random.value > Mathf.Clamp01(chance))
+            return;
+
+        int duration = effect.statusDurationOnHit;
+
+        if (enemy.isBoss)
+            duration = Mathf.CeilToInt(duration * effect.statusBossDurationMultiplier);
+
+        EnemyStatusController.GetOrAdd(enemy).ApplyEffect(
+            enemy,
+            effect.statusAppliedOnHit,
+            Mathf.Max(0, effect.statusValueOnHit),
+            Mathf.Max(0, effect.statusSecondaryValueOnHit),
+            Mathf.Max(0, duration),
+            effect.damageType,
+            false
+        );
+    }
+
+    private void ApplyPercentMissingHPDamage(CardEffect effect, Enemy enemy, SkillCastContext context)
+    {
+        int missingHP = Mathf.Max(0, enemy.maxHP - enemy.GetCurrentHP());
+        int percent = Mathf.Max(0, effect.value);
+        int damage = Mathf.RoundToInt(missingHP * (percent / 100f));
+
+        if (effect.scaleValueWithMiniGame && context.miniGameResult != null)
+            damage = Mathf.RoundToInt(damage * context.miniGameResult.multiplier);
+
+        if (effect.addBaseDamageToValue)
+            damage += cardData.baseDamage;
+
+        if (enemy.isBoss)
+            damage = Mathf.RoundToInt(damage * effect.bossValueMultiplier);
+
+        DealEnemyDamage(enemy, CalculateSkillDamage(damage, effect.damageType), effect.damageType, false, context);
+    }
+
+    private void ApplyPercentMaxHPDamage(CardEffect effect, Enemy enemy, SkillCastContext context)
+    {
+        int percent = Mathf.Max(0, effect.value);
+        int damage = Mathf.RoundToInt(enemy.maxHP * (percent / 100f));
+
+        if (effect.scaleValueWithMiniGame && context.miniGameResult != null)
+            damage = Mathf.RoundToInt(damage * context.miniGameResult.multiplier);
+
+        if (effect.addBaseDamageToValue)
+            damage += cardData.baseDamage;
+
+        if (enemy.isBoss)
+            damage = Mathf.RoundToInt(damage * effect.bossValueMultiplier);
+
+        DealEnemyDamage(enemy, CalculateSkillDamage(damage, effect.damageType), effect.damageType, false, context);
+    }
+
+    private void ApplyAdjacentSplashDamage(CardEffect effect, SkillCastContext context)
+    {
+        if (context.chosenTarget == null)
+            return;
+
+        int percent = effect.value > 0 ? effect.value : 50;
+        int splashDamage = Mathf.Max(1, Mathf.RoundToInt(context.lastDamageDealt * (percent / 100f)));
+        List<Enemy> adjacentEnemies = GetAdjacentEnemies(context.chosenTarget);
+
+        for (int i = 0; i < adjacentEnemies.Count; i++)
+            DealEnemyDamage(adjacentEnemies[i], splashDamage, effect.damageType, false, context);
+    }
+
+    private void ApplyLifeStealDamage(CardEffect effect, Enemy enemy, SkillCastContext context)
+    {
+        int damage = CalculateSkillValue(effect, enemy, context);
+        int dealt = DealEnemyDamage(enemy, damage, effect.damageType, false, context);
+
+        if (PlayerHealth.Instance != null)
+            PlayerHealth.Instance.Heal(dealt);
+    }
+
+    private void ApplyAllInDamage(CardEffect effect, Enemy enemy, SkillCastContext context)
+    {
+        int manaDamage = Mathf.RoundToInt(effect.value * context.manaSpent);
+
+        if (effect.scaleValueWithMiniGame && context.miniGameResult != null)
+            manaDamage = Mathf.RoundToInt(manaDamage * context.miniGameResult.multiplier);
+
+        int finalDamage = cardData.baseDamage + temporarySkillValueBonus + manaDamage;
+
+        if (enemy.isBoss)
+            finalDamage = Mathf.RoundToInt(finalDamage * effect.bossValueMultiplier);
+
+        DealEnemyDamage(enemy, CalculateSkillDamage(finalDamage, effect.damageType), effect.damageType, false, context);
+    }
+
+    private void ApplyFlee(CardEffect effect, Enemy enemy, SkillCastContext context)
+    {
+        if (enemy == null || enemy.isBoss)
+            return;
+
+        enemy.TryFlee(1f);
+    }
+
+    private void ApplyRandomStatus(CardEffect effect, Enemy enemy, SkillCastContext context)
+    {
+        if (enemy == null)
+            return;
+
+        EffectType[] normalStatuses =
+        {
+            EffectType.Poison,
+            EffectType.Burn,
+            EffectType.Bleed,
+            EffectType.Weakened,
+            EffectType.Softened,
+            EffectType.Vulnerable,
+            EffectType.Dazed,
+            EffectType.Blind
+        };
+
+        EffectType[] bossSafeStatuses =
+        {
+            EffectType.Poison,
+            EffectType.Burn,
+            EffectType.Bleed,
+            EffectType.Leech,
+            EffectType.Volatile
+        };
+
+        EffectType[] pool = enemy.isBoss ? bossSafeStatuses : normalStatuses;
+        EffectType picked = pool[Random.Range(0, pool.Length)];
+
+        int value = CalculateStatusValue(effect, enemy, context);
+        int duration = Mathf.Max(1, CalculateStatusDuration(effect, enemy, context));
+
+        EnemyStatusController.GetOrAdd(enemy).ApplyEffect(enemy, picked, value, effect.secondaryValue, duration, effect.damageType, false);
+    }
+
+    private void ApplyStatus(CardEffect effect, Enemy enemy, SkillCastContext context)
+    {
+        if (enemy == null)
+            return;
+
+        int value = CalculateStatusValue(effect, enemy, context);
+        int duration = CalculateStatusDuration(effect, enemy, context);
+
+        if (duration <= 0 && RequiresDuration(effect.effectType))
+            duration = 1;
+
+        EnemyStatusController.GetOrAdd(enemy).ApplyEffect(
+            enemy,
+            effect.effectType,
+            value,
+            effect.secondaryValue,
+            duration,
+            effect.damageType,
+            effect.removeWhenDamaged
+        );
+    }
+
+    private void TryApplyQuickStatus(Enemy enemy, EffectType status, int value, int secondaryValue, int duration, bool removeWhenDamaged)
+    {
+        if (enemy == null)
+            return;
+
+        EnemyStatusController.GetOrAdd(enemy).ApplyEffect(enemy, status, value, secondaryValue, duration, CardDamageType.Magic, removeWhenDamaged);
+    }
+
+    private void ApplyPlayerOrCardEffect(CardEffect effect, SkillCastContext context)
+    {
+        int value = CalculateSupportValue(effect, context);
+        int duration = Mathf.Max(0, effect.GetDurationRoll() + effect.GetMiniGameBonusTurns(context.miniGameResult));
 
         switch (effect.effectType)
         {
@@ -589,110 +842,226 @@ public class Card : MonoBehaviour, IPointerClickHandler
                     PlayerHealth.Instance.Heal(value);
                 break;
 
-            case EffectType.FullHeal:
-                if (PlayerHealth.Instance != null)
-                    PlayerHealth.Instance.SendMessage("FullHeal", SendMessageOptions.DontRequireReceiver);
-                break;
-
             case EffectType.Shield:
                 if (PlayerShield.Instance != null)
                     PlayerShield.Instance.AddShield(value);
                 break;
 
-            case EffectType.HealFromDamage:
-            case EffectType.Lifesteal:
-                if (PlayerHealth.Instance != null)
-                {
-                    int healAmount = value <= 100
-                        ? Mathf.RoundToInt(result.totalDamageDealt * (value / 100f))
-                        : value;
-
-                    PlayerHealth.Instance.Heal(Mathf.Max(0, healAmount));
-                }
-                break;
-
             case EffectType.Cleanse:
-                CleanseEnemies(effect.requiredStatus, Mathf.Max(1, value));
+                CleansePlayer(effect, context);
                 break;
 
             case EffectType.CleanseAll:
-                CleanseAllEnemies();
-                break;
-
-            case EffectType.CleanseSome:
-                CleanseSomeEnemies(Mathf.Max(1, value));
+                CleanseAllPlayerAndEnemies();
                 break;
 
             case EffectType.Regeneration:
-            case EffectType.DamageBuff:
-            case EffectType.AttackBuff:
-            case EffectType.SpellDamageBuff:
-            case EffectType.CostReduction:
-            case EffectType.DefenseBuff:
-            case EffectType.EvasionBuff:
-            case EffectType.ManaGainBuff:
-            case EffectType.DrawBuff:
-            case EffectType.CriticalBuff:
-            case EffectType.CriticalDamageBuff:
-            case EffectType.Guard:
-            case EffectType.MagicShield:
-            case EffectType.PhysicalShield:
-            case EffectType.Reflect:
-            case EffectType.CounterAttack:
-            case EffectType.DodgeBuff:
-            case EffectType.Invisibility:
                 if (BuffManager.Instance != null)
-                    BuffManager.Instance.ApplyBuff(effect.effectType, value, Mathf.Max(1, effect.duration));
+                    BuffManager.Instance.ApplyRegeneration(value, Mathf.Max(1, duration));
                 break;
 
-            case EffectType.ShieldOverload:
-                ApplyShieldOverload(value);
+            case EffectType.FullHeal:
+                if (PlayerHealth.Instance != null)
+                    PlayerHealth.Instance.FullHeal();
                 break;
 
-            case EffectType.Clone:
-                if (HandManager.Instance != null)
-                    HandManager.Instance.CloneCardAfterCurrent(this);
+            case EffectType.PhysicalBuff:
+                if (BuffManager.Instance != null)
+                    BuffManager.Instance.ApplyPhysicalBuff(value, Mathf.Max(1, duration));
                 break;
 
-            case EffectType.UpgradeCardTemporary:
-                ApplyTemporaryUpgrade(effect);
+            case EffectType.MagicBuff:
+                if (BuffManager.Instance != null)
+                    BuffManager.Instance.ApplyMagicBuff(value, Mathf.Max(1, duration));
                 break;
 
-            case EffectType.ReduceRandomCardCost:
-                if (HandManager.Instance != null)
-                    HandManager.Instance.ReduceRandomCardCost(Mathf.Max(0f, value));
+            case EffectType.SupportBuff:
+                if (BuffManager.Instance != null)
+                    BuffManager.Instance.ApplySupportBuff(value, Mathf.Max(1, duration));
                 break;
 
-            case EffectType.RefundManaOnKill:
-                result.pendingKillRefund += value;
+            case EffectType.CommonBuff:
+            case EffectType.ExtremeBuff:
+                if (BuffManager.Instance != null)
+                    BuffManager.Instance.ApplyAllBuff(value, Mathf.Max(1, duration));
+                break;
+
+            case EffectType.ReturnMana:
+                if (ManaManager.Instance != null)
+                    ManaManager.Instance.AddMana(value);
+                break;
+
+            case EffectType.CloneLeft:
+                CloneRelativeCard(true);
+                break;
+
+            case EffectType.CloneRight:
+                CloneRelativeCard(false);
                 break;
         }
     }
 
-    private int DealEnemyDamage(Enemy enemy, int damage, CardDamageType damageType, bool trueDamage)
+    private void CleansePlayer(CardEffect effect, SkillCastContext context)
+    {
+        int count = Mathf.Max(1, effect.value);
+
+        if (context.miniGameResult != null && context.miniGameResult.IsGreatOrPerfect())
+            count = Mathf.Max(count, 2);
+
+        SendPlayerStatusMessage("CleanseSome", count);
+        SendPlayerStatusMessage("RemoveSomePlayerDebuffs", count);
+        SendPlayerStatusMessage("Cleanse", count);
+    }
+
+    private void CleanseAllPlayerAndEnemies()
+    {
+        SendPlayerStatusMessage("CleanseAll");
+        SendPlayerStatusMessage("RemoveAllPlayerDebuffs");
+
+        List<Enemy> enemies = GetAliveEnemies();
+
+        for (int i = 0; i < enemies.Count; i++)
+        {
+            EnemyStatusController controller = EnemyStatusController.Get(enemies[i]);
+
+            if (controller != null)
+                controller.RemoveAllNegativeEffects();
+        }
+    }
+
+    private void CloneRelativeCard(bool left)
+    {
+        if (HandManager.Instance == null)
+            return;
+
+        Card targetCard = left
+            ? HandManager.Instance.GetPreviousCard(this)
+            : HandManager.Instance.GetNextCard(this);
+
+        if (targetCard == null)
+            return;
+
+        HandManager.Instance.CloneCardAfterCurrent(targetCard);
+    }
+
+    private int CalculateSkillValue(CardEffect effect, Enemy enemy, SkillCastContext context)
+    {
+        int value = effect.GetBaseValueRoll() + temporarySkillValueBonus;
+
+        if (context.miniGameResult != null && context.miniGameResult.grade == MiniGameGrade.Perfect && effect.perfectValueOverride > 0)
+            value = effect.perfectValueOverride;
+
+        if (effect.scaleValueWithMiniGame && context.miniGameResult != null)
+            value = Mathf.RoundToInt(value * context.miniGameResult.multiplier);
+
+        if (effect.addBaseDamageToValue && cardData != null)
+            value += cardData.baseDamage;
+
+        if (enemy != null && enemy.isBoss)
+            value = Mathf.RoundToInt(value * effect.bossValueMultiplier);
+
+        return CalculateSkillDamage(Mathf.Max(0, value), effect.damageType);
+    }
+
+    private int CalculateStatusValue(CardEffect effect, Enemy enemy, SkillCastContext context)
+    {
+        int value = effect.GetBaseValueRoll() + temporarySkillValueBonus;
+
+        if (effect.scaleValueWithMiniGame && context.miniGameResult != null)
+            value = Mathf.RoundToInt(value * context.miniGameResult.multiplier);
+
+        if (enemy != null && enemy.isBoss)
+            value = Mathf.RoundToInt(value * effect.bossValueMultiplier);
+
+        return Mathf.Max(0, value);
+    }
+
+    private int CalculateStatusDuration(CardEffect effect, Enemy enemy, SkillCastContext context)
+    {
+        int duration = effect.GetDurationRoll() + effect.GetMiniGameBonusTurns(context.miniGameResult);
+
+        if (enemy != null && enemy.isBoss)
+            duration = Mathf.CeilToInt(duration * effect.bossDurationMultiplier);
+
+        return Mathf.Max(0, duration);
+    }
+
+    private int CalculateSupportValue(CardEffect effect, SkillCastContext context)
+    {
+        int value = effect.GetBaseValueRoll() + temporarySkillValueBonus;
+
+        if (context.miniGameResult != null && context.miniGameResult.grade == MiniGameGrade.Perfect && effect.perfectValueOverride > 0)
+            value = effect.perfectValueOverride;
+
+        if (effect.scaleValueWithMiniGame && context.miniGameResult != null)
+            value = Mathf.RoundToInt(value * context.miniGameResult.multiplier);
+
+        if (effect.addBaseDamageToValue && cardData != null)
+            value += cardData.baseDamage;
+
+        if (effect.secondaryValue > 0)
+            value += effect.secondaryValue;
+
+        if (BuffManager.Instance != null)
+            value = Mathf.RoundToInt(value * BuffManager.Instance.GetSupportMultiplier());
+
+        return Mathf.Max(0, value);
+    }
+
+    private int CalculateBasicDamage(int baseValue, CardDamageType damageType)
+    {
+        float multiplier = BuffManager.Instance == null ? 1f : BuffManager.Instance.GetDamageMultiplier(damageType);
+        return Mathf.Max(0, Mathf.RoundToInt(baseValue * multiplier));
+    }
+
+    private int CalculateSkillDamage(int baseValue, CardDamageType damageType)
+    {
+        float multiplier = BuffManager.Instance == null ? 1f : BuffManager.Instance.GetDamageMultiplier(damageType);
+        return Mathf.Max(0, Mathf.RoundToInt(baseValue * multiplier));
+    }
+
+    private int DealEnemyDamage(Enemy enemy, int damage, CardDamageType damageType, bool ignoreShield, SkillCastContext context)
     {
         if (enemy == null || damage <= 0)
             return 0;
 
-        int beforeHP = enemy.GetCurrentHP();
+        bool trueDamage = damageType == CardDamageType.True;
         int finalDamage = damage;
 
         EnemyStatusController controller = EnemyStatusController.Get(enemy);
+
         if (controller != null)
             finalDamage = controller.ModifyIncomingDamage(enemy, finalDamage, damageType, trueDamage);
 
-        enemy.TakeDamage(Mathf.Max(0, finalDamage));
-
+        int beforeHP = enemy.GetCurrentHP();
+        int dealt = enemy.TakeDamage(finalDamage, damageType, ignoreShield || trueDamage);
         int afterHP = enemy.GetCurrentHP();
-        return Mathf.Max(0, beforeHP - afterHP);
+
+        if (controller != null)
+            controller.NotifyDamaged(enemy, dealt);
+
+        if (context != null)
+        {
+            int hpDamage = Mathf.Max(0, beforeHP - afterHP);
+            context.totalDamageDealt += hpDamage;
+            context.lastDamageDealt = hpDamage;
+
+            if (beforeHP > 0 && afterHP <= 0)
+                context.killedEnemy = true;
+        }
+
+        return dealt;
     }
 
-    private void ApplySplitDamage(List<Enemy> enemies, int totalDamage, CardDamageType damageType)
+    private void ApplySplitBasicDamage(List<Enemy> enemies, int totalDamage, CardDamageType damageType)
     {
         if (enemies == null || enemies.Count == 0 || totalDamage <= 0)
             return;
 
-        enemies = enemies.Where(enemy => enemy != null && enemy.GetCurrentHP() > 0).Distinct().ToList();
+        enemies = enemies
+            .Where(enemy => enemy != null && enemy.GetCurrentHP() > 0)
+            .Distinct()
+            .ToList();
 
         if (enemies.Count == 0)
             return;
@@ -710,286 +1079,8 @@ public class Card : MonoBehaviour, IPointerClickHandler
                 remainder--;
             }
 
-            DealEnemyDamage(enemies[i], finalDamage, damageType, false);
+            DealEnemyDamage(enemies[i], finalDamage, damageType, false, null);
         }
-    }
-
-    private void ApplySplashDamage(Enemy mainTarget, int value, CardEffect effect)
-    {
-        DealEnemyDamage(mainTarget, CalculateDamage(value, effect.damageType), effect.damageType, false);
-
-        int splashDamage = effect.secondaryValue > 0
-            ? effect.secondaryValue
-            : Mathf.Max(1, value / 2);
-
-        List<Enemy> enemies = EnemyManager.Instance == null
-            ? new List<Enemy>()
-            : new List<Enemy>(EnemyManager.Instance.GetAllEnemies());
-
-        foreach (Enemy enemy in enemies)
-        {
-            if (enemy != null && enemy != mainTarget && enemy.GetCurrentHP() > 0)
-                DealEnemyDamage(enemy, CalculateDamage(splashDamage, effect.damageType), effect.damageType, false);
-        }
-    }
-
-    private void ApplyChainDamage(Enemy firstTarget, int value, CardEffect effect)
-    {
-        List<Enemy> enemies = EnemyManager.Instance == null
-            ? new List<Enemy>()
-            : new List<Enemy>(EnemyManager.Instance.GetAllEnemies());
-
-        enemies = enemies.Where(enemy => enemy != null && enemy.GetCurrentHP() > 0).ToList();
-
-        Enemy currentTarget = firstTarget;
-        float currentDamage = value;
-        int jumps = Mathf.Max(1, effect.hitCount);
-
-        for (int i = 0; i < jumps; i++)
-        {
-            if (currentTarget == null || currentTarget.GetCurrentHP() <= 0)
-                break;
-
-            DealEnemyDamage(currentTarget, CalculateDamage(Mathf.RoundToInt(currentDamage), effect.damageType), effect.damageType, false);
-            enemies.Remove(currentTarget);
-
-            if (enemies.Count == 0)
-                break;
-
-            currentTarget = enemies[UnityEngine.Random.Range(0, enemies.Count)];
-            currentDamage *= Mathf.Clamp01(effect.chainDecay);
-
-            if (currentDamage < 1f)
-                break;
-        }
-    }
-
-    private void ApplyRandomHits(CardEffect effect)
-    {
-        List<Enemy> enemies = EnemyManager.Instance == null
-            ? new List<Enemy>()
-            : new List<Enemy>(EnemyManager.Instance.GetAllEnemies());
-
-        enemies = enemies.Where(enemy => enemy != null && enemy.GetCurrentHP() > 0).ToList();
-
-        if (enemies.Count == 0)
-            return;
-
-        int hits = Mathf.Max(1, effect.hitCount);
-        int value = effect.value + temporaryEffectValueBonus;
-
-        for (int i = 0; i < hits; i++)
-        {
-            Enemy enemy = enemies[UnityEngine.Random.Range(0, enemies.Count)];
-            DealEnemyDamage(enemy, CalculateDamage(value, effect.damageType), effect.damageType, false);
-        }
-    }
-
-    private void ApplyMultiHit(Enemy enemy, CardEffect effect)
-    {
-        int hits = Mathf.Max(1, effect.hitCount);
-        int value = effect.value + temporaryEffectValueBonus;
-
-        for (int i = 0; i < hits; i++)
-            DealEnemyDamage(enemy, CalculateDamage(value, effect.damageType), effect.damageType, false);
-    }
-
-    private void ApplyOverkillDamage(Enemy enemy, int value, CardEffect effect)
-    {
-        int beforeHP = enemy.GetCurrentHP();
-        int dealt = DealEnemyDamage(enemy, CalculateDamage(value, effect.damageType), effect.damageType, false);
-        int leftover = Mathf.Max(0, CalculateDamage(value, effect.damageType) - beforeHP);
-
-        if (dealt <= 0 || leftover <= 0)
-            return;
-
-        List<Enemy> enemies = EnemyManager.Instance == null
-            ? new List<Enemy>()
-            : new List<Enemy>(EnemyManager.Instance.GetAllEnemies());
-
-        enemies = enemies.Where(e => e != null && e != enemy && e.GetCurrentHP() > 0).OrderBy(e => e.GetCurrentHP()).ToList();
-
-        if (enemies.Count > 0)
-            DealEnemyDamage(enemies[0], leftover, effect.damageType, false);
-    }
-
-    private void ApplyExecuteDamage(Enemy enemy, int value, CardEffect effect)
-    {
-        int thresholdPercent = effect.secondaryValue > 0 ? effect.secondaryValue : 30;
-        bool canExecute = enemy.GetCurrentHP() <= Mathf.CeilToInt(enemy.maxHP * (thresholdPercent / 100f));
-
-        if (canExecute)
-            DealEnemyDamage(enemy, CalculateDamage(value * 2, effect.damageType), effect.damageType, false);
-        else
-            DealEnemyDamage(enemy, CalculateDamage(value, effect.damageType), effect.damageType, false);
-    }
-
-    private void ApplyOpeningStrike(Enemy enemy, int value, CardEffect effect)
-    {
-        bool aboveHalf = enemy.GetCurrentHP() > enemy.maxHP / 2;
-        int damage = aboveHalf ? value + Mathf.Max(1, effect.secondaryValue) : value;
-        DealEnemyDamage(enemy, CalculateDamage(damage, effect.damageType), effect.damageType, false);
-    }
-
-    private void ApplyStatus(Enemy enemy, EffectType status, int value, CardEffect sourceEffect)
-    {
-        if (enemy == null)
-            return;
-
-        if (enemy.isBoss && !sourceEffect.ignoreBossImmunity)
-        {
-            if (status == EffectType.Fear || status == EffectType.Panicked || status == EffectType.Flee || status == EffectType.HalfHP)
-                return;
-        }
-
-        CardEffect runtimeEffect = CloneEffect(sourceEffect);
-        runtimeEffect.effectType = status;
-        runtimeEffect.value = value;
-
-        EnemyStatusController.GetOrAdd(enemy).ApplyEffect(runtimeEffect, GetCurrentManaCost());
-    }
-
-    private void ConsumeDOT(Enemy enemy, int multiplier)
-    {
-        EnemyStatusController controller = EnemyStatusController.Get(enemy);
-
-        if (controller == null)
-            return;
-
-        int damage = controller.ConsumeDOTsForDamage(Mathf.Max(1, multiplier));
-        DealEnemyDamage(enemy, damage, CardDamageType.True, true);
-    }
-
-    private void CleanseEnemies(EffectType status, int count)
-    {
-        List<Enemy> enemies = EnemyManager.Instance == null
-            ? new List<Enemy>()
-            : new List<Enemy>(EnemyManager.Instance.GetAllEnemies());
-
-        foreach (Enemy enemy in enemies)
-        {
-            EnemyStatusController controller = EnemyStatusController.Get(enemy);
-
-            if (controller == null)
-                continue;
-
-            if (status != EffectType.None)
-                controller.RemoveEffect(status);
-            else
-                controller.RemoveSomeNegativeEffects(count);
-        }
-    }
-
-    private void CleanseAllEnemies()
-    {
-        List<Enemy> enemies = EnemyManager.Instance == null
-            ? new List<Enemy>()
-            : new List<Enemy>(EnemyManager.Instance.GetAllEnemies());
-
-        foreach (Enemy enemy in enemies)
-        {
-            EnemyStatusController controller = EnemyStatusController.Get(enemy);
-            if (controller != null)
-                controller.RemoveAllNegativeEffects();
-        }
-    }
-
-    private void CleanseSomeEnemies(int count)
-    {
-        CleanseEnemies(EffectType.None, count);
-    }
-
-    private void ApplyShieldOverload(int value)
-    {
-        if (PlayerShield.Instance == null)
-            return;
-
-        // Your max shield is private in PlayerShield, so this simple version says:
-        // if the player already has any shield, turn this effect into all-enemy damage.
-        if (PlayerShield.Instance.currentShield > 0)
-        {
-            List<Enemy> enemies = EnemyManager.Instance == null
-                ? new List<Enemy>()
-                : new List<Enemy>(EnemyManager.Instance.GetAllEnemies());
-
-            foreach (Enemy enemy in enemies)
-            {
-                if (enemy != null && enemy.GetCurrentHP() > 0)
-                    DealEnemyDamage(enemy, Mathf.Max(1, value), CardDamageType.True, true);
-            }
-        }
-        else
-        {
-            PlayerShield.Instance.AddShield(1);
-        }
-    }
-
-    private void ApplyTemporaryUpgrade(CardEffect effect)
-    {
-        Card targetCard = this;
-
-        if (HandManager.Instance != null)
-        {
-            switch (effect.targetType)
-            {
-                case TargetType.PreviousCard:
-                    targetCard = HandManager.Instance.GetPreviousCard(this);
-                    break;
-
-                case TargetType.NextCard:
-                    targetCard = HandManager.Instance.GetNextCard(this);
-                    break;
-
-                case TargetType.RandomCardInHand:
-                    targetCard = HandManager.Instance.GetRandomCardInHand();
-                    break;
-            }
-        }
-
-        if (targetCard != null)
-            targetCard.UpgradeTemporary(effect.value, effect.secondaryValue);
-    }
-
-    private int CalculateDamage(int baseValue, CardDamageType damageType)
-    {
-        float multiplier = BuffManager.Instance == null ? 1f : BuffManager.Instance.GetDamageMultiplier(damageType);
-        return Mathf.Max(0, Mathf.RoundToInt(baseValue * multiplier));
-    }
-
-    private void DamagePlayer(int amount)
-    {
-        if (amount <= 0 || PlayerHealth.Instance == null)
-            return;
-
-        PlayerHealth.Instance.SendMessage("TakeDamage", amount, SendMessageOptions.DontRequireReceiver);
-    }
-
-    private bool EnemyHasStatus(Enemy enemy, EffectType status)
-    {
-        if (enemy == null || status == EffectType.None)
-            return false;
-
-        EnemyStatusController controller = EnemyStatusController.Get(enemy);
-        bool controllerHasStatus = controller != null && controller.HasEffect(status);
-
-        if (controllerHasStatus)
-            return true;
-
-        // Backwards compatible with your old Enemy.HasEffect system.
-        return enemy.HasEffect(status);
-    }
-
-    private bool EnemyHasAnyDOT(Enemy enemy)
-    {
-        if (enemy == null)
-            return false;
-
-        EnemyStatusController controller = EnemyStatusController.Get(enemy);
-
-        if (controller != null && controller.HasAnyDOT())
-            return true;
-
-        return enemy.HasEffect(EffectType.Poison) || enemy.HasEffect(EffectType.Burn) || enemy.HasEffect(EffectType.Bleed);
     }
 
     private bool IsPlayerEffect(EffectType type)
@@ -1000,29 +1091,14 @@ public class Card : MonoBehaviour, IPointerClickHandler
             case EffectType.Shield:
             case EffectType.Cleanse:
             case EffectType.CleanseAll:
-            case EffectType.CleanseSome:
             case EffectType.Regeneration:
             case EffectType.FullHeal:
-            case EffectType.HealFromDamage:
-            case EffectType.Lifesteal:
-            case EffectType.DamageBuff:
-            case EffectType.AttackBuff:
-            case EffectType.SpellDamageBuff:
-            case EffectType.CostReduction:
-            case EffectType.DefenseBuff:
-            case EffectType.EvasionBuff:
-            case EffectType.ManaGainBuff:
-            case EffectType.DrawBuff:
-            case EffectType.CriticalBuff:
-            case EffectType.CriticalDamageBuff:
-            case EffectType.Guard:
-            case EffectType.MagicShield:
-            case EffectType.PhysicalShield:
-            case EffectType.Reflect:
-            case EffectType.CounterAttack:
-            case EffectType.DodgeBuff:
-            case EffectType.Invisibility:
-            case EffectType.ShieldOverload:
+            case EffectType.PhysicalBuff:
+            case EffectType.MagicBuff:
+            case EffectType.SupportBuff:
+            case EffectType.CommonBuff:
+            case EffectType.ExtremeBuff:
+            case EffectType.ReturnMana:
                 return true;
         }
 
@@ -1031,85 +1107,81 @@ public class Card : MonoBehaviour, IPointerClickHandler
 
     private bool IsCardManipulationEffect(EffectType type)
     {
-        return type == EffectType.Clone ||
-               type == EffectType.UpgradeCardTemporary ||
-               type == EffectType.ReduceRandomCardCost ||
-               type == EffectType.RefundManaOnKill;
+        return type == EffectType.CloneLeft || type == EffectType.CloneRight;
     }
 
-    private bool IsEnemyStatus(EffectType type)
+    private bool RequiresDuration(EffectType type)
     {
-        switch (type)
+        return EnemyStatusController.IsEnemyStatusEffect(type) && type != EffectType.Marked && type != EffectType.Exposed;
+    }
+
+    private List<Enemy> GetAliveEnemies()
+    {
+        List<Enemy> enemies = EnemyManager.Instance == null
+            ? new List<Enemy>()
+            : new List<Enemy>(EnemyManager.Instance.GetAllEnemies());
+
+        return enemies
+            .Where(enemy => enemy != null && enemy.GetCurrentHP() > 0)
+            .ToList();
+    }
+
+    private void SendPlayerStatusMessage(string methodName)
+    {
+        if (PlayerHealth.Instance == null)
+            return;
+
+        PlayerHealth.Instance.gameObject.SendMessage(methodName, SendMessageOptions.DontRequireReceiver);
+    }
+
+    private void SendPlayerStatusMessage(string methodName, object value)
+    {
+        if (PlayerHealth.Instance == null)
+            return;
+
+        PlayerHealth.Instance.gameObject.SendMessage(methodName, value, SendMessageOptions.DontRequireReceiver);
+    }
+
+    private void RefreshVisualColor()
+    {
+        if (!isActive)
         {
-            case EffectType.Poison:
-            case EffectType.Burn:
-            case EffectType.Bleed:
-            case EffectType.Blind:
-            case EffectType.Curse:
-            case EffectType.Petrify:
-            case EffectType.Shock:
-            case EffectType.Marked:
-            case EffectType.Exposed:
-            case EffectType.Weakened:
-            case EffectType.Softened:
-            case EffectType.Hexed:
-            case EffectType.Doomed:
-            case EffectType.Silenced:
-            case EffectType.Dazed:
-            case EffectType.Charmed:
-            case EffectType.Panicked:
-            case EffectType.Taunted:
-            case EffectType.Stun:
-            case EffectType.Sleep:
-            case EffectType.Confusion:
-            case EffectType.Fear:
-            case EffectType.Cripple:
-            case EffectType.Vulnerable:
-            case EffectType.Rot:
-            case EffectType.LeechDOT:
-            case EffectType.VolatileDOT:
-            case EffectType.Wildfire:
-            case EffectType.AttackDebuff:
-            case EffectType.DefenseDebuff:
-            case EffectType.EvasionDebuff:
-            case EffectType.SpellPowerDebuff:
-            case EffectType.HealingDebuff:
-                return true;
+            SetRendererColor(Color.grey);
+            return;
         }
 
-        return false;
-    }
-
-    private CardEffect CloneEffect(CardEffect source)
-    {
-        return new CardEffect
+        if (isCastingSkill)
         {
-            effectType = source.effectType,
-            targetType = source.targetType,
-            damageType = source.damageType,
-            value = source.value,
-            secondaryValue = source.secondaryValue,
-            duration = source.duration,
-            hitCount = source.hitCount,
-            targetCount = source.targetCount,
-            randomMinDuration = source.randomMinDuration,
-            randomMaxDuration = source.randomMaxDuration,
-            chance = source.chance,
-            condition = source.condition,
-            requiredStatus = source.requiredStatus,
-            requiredMana = source.requiredMana,
-            chainDecay = source.chainDecay,
-            ignoreBossImmunity = source.ignoreBossImmunity,
-            removeRequiredStatusAfterUse = source.removeRequiredStatusAfterUse,
-            designerNote = source.designerNote
-        };
+            SetRendererColor(Color.cyan);
+            return;
+        }
+
+        if (isWaitingForSkillTarget)
+        {
+            SetRendererColor(Color.yellow);
+            return;
+        }
+
+        SetRendererColor(originalColor);
     }
 
-    private class SpellResult
+    private void SetRendererColor(Color color)
     {
-        public int totalDamageDealt = 0;
-        public bool killedEnemy = false;
-        public float refundMana = 0f;
-        public float pendingKillRefund = 0f;
+        if (spriteRenderer != null)
+            spriteRenderer.color = color;
+        else if (meshRenderer != null)
+            meshRenderer.material.color = color;
+    }
+
+    private void FlashNoMana()
+    {
+        Color noManaColor = new Color(1f, 0.25f, 0.25f, 1f);
+        SetRendererColor(noManaColor);
+
+        DOVirtual.DelayedCall(0.15f, () =>
+        {
+            if (this != null)
+                RefreshVisualColor();
+        });
     }
 }

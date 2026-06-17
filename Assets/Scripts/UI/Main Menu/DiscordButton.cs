@@ -1,19 +1,23 @@
 using UnityEngine;
 using UnityEngine.UI;
 
+// Opens a Discord invite link.
 public class DiscordButton : MonoBehaviour
 {
     [Header("Discord Link")]
+
+    // Discord invite URL.
     [Tooltip("Put your Discord invite link here.")]
     [SerializeField] private string discordInviteURL = "https://discord.gg/JhTryYxMQe";
 
     [Header("Button Reference")]
+
+    // Button that opens Discord.
     [Tooltip("Optional. If left empty, this script will try to find a Button on this GameObject.")]
     [SerializeField] private Button discordButton;
 
     private void Awake()
     {
-        // If no button was assigned in the Inspector, try to get one from this GameObject
         if (discordButton == null)
         {
             discordButton = GetComponent<Button>();
@@ -22,7 +26,6 @@ public class DiscordButton : MonoBehaviour
 
     private void OnEnable()
     {
-        // Add the click listener when this object becomes active
         if (discordButton != null)
         {
             discordButton.onClick.AddListener(OpenDiscord);
@@ -35,23 +38,21 @@ public class DiscordButton : MonoBehaviour
 
     private void OnDisable()
     {
-        // Remove the click listener to avoid duplicate calls or memory issues
         if (discordButton != null)
         {
             discordButton.onClick.RemoveListener(OpenDiscord);
         }
     }
 
+    // Opens the Discord link in the browser.
     public void OpenDiscord()
     {
-        // Make sure the link is not empty
         if (string.IsNullOrWhiteSpace(discordInviteURL))
         {
             Debug.LogWarning("DiscordButton: Discord invite URL is empty.");
             return;
         }
 
-        // Opens the Discord invite in the player's default browser
         Application.OpenURL(discordInviteURL);
     }
 }

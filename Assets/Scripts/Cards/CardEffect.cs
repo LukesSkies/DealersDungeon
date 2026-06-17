@@ -1,84 +1,139 @@
 using System;
 using UnityEngine;
 
-// This is the data for ONE effect inside a CardData asset.
-// A single card can have many CardEffects.
+// Stores one effect inside a CardData asset.
 [Serializable]
 public class CardEffect
 {
     [Header("Effect")]
     public EffectType effectType = EffectType.None;
 
-    [Tooltip("Who this effect should target when the card spell is cast.")]
-    public TargetType targetType = TargetType.SingleEnemy;
+    [Tooltip("UseCardTarget means this effect uses CardData.targetType.")]
+    public CardTargetType targetOverride = CardTargetType.UseCardTarget;
 
-    [Tooltip("Physical, Spell, or True damage. Used by status modifiers such as Softened and Shock.")]
-    public CardDamageType damageType = CardDamageType.Spell;
+    public CardDamageType damageType = CardDamageType.Magic;
 
     [Header("Numbers")]
-    [Tooltip("Main number. Damage, healing, shield, status tick damage, buff percent, etc.")]
+    [Tooltip("Main number. Damage, healing, shield, DOT tick damage, buff percent, mana return, flee attempts, etc.")]
     public int value = 0;
 
-    [Tooltip("Extra number. Examples: splash damage, recoil damage, threshold percent, mana refund, upgrade amount.")]
+    [Tooltip("Extra number. Common uses: chance percent, burst damage, percent value, continuation chance, adjacent percent.")]
     public int secondaryValue = 0;
 
-    [Tooltip("How many turns this lasts. For instant effects, leave at 0.")]
+    [Tooltip("Turns this effect lasts. Instant effects should be 0.")]
     public int duration = 0;
 
-    [Tooltip("For MultiHit / RandomHits / ChainDamage.")]
+    [Header("Skill Damage Options")]
+    [Tooltip("Adds CardData.baseDamage to this skill damage after mini-game scaling.")]
+    public bool addBaseDamageToValue = false;
+
+    [Tooltip("Multiplies this effect's value by the mini-game multiplier.")]
+    public bool scaleValueWithMiniGame = true;
+
+    [Tooltip("Adds extra turns based on the mini-game grade. OK +0, Good +1, Perfect +2.")]
+    public bool addMiniGameBonusTurns = false;
+
+    [Header("Random Hits / Values")]
     public int hitCount = 1;
-
-    [Tooltip("For RandomEnemies.")]
-    public int targetCount = 1;
-
-    [Header("Random Duration")]
-    [Tooltip("If greater than 0, this is the minimum random duration.")]
+    public int randomMinHits = 0;
+    public int randomMaxHits = 0;
+    public int randomMinValue = 0;
+    public int randomMaxValue = 0;
     public int randomMinDuration = 0;
-
-    [Tooltip("If greater than randomMinDuration, the effect duration is rolled between min and max.")]
     public int randomMaxDuration = 0;
 
-    [Header("Chance / Conditions")]
-    [Range(0f, 1f)]
-    public float chance = 1f;
+    [Header("Mini Game Grade Bonuses")]
+    public int bonusTurnsOnGreatOrPerfect = 0;
+    public int bonusTurnsOnPerfect = 0;
+    public int perfectValueOverride = 0;
 
-    public EffectCondition condition = EffectCondition.None;
+    [Header("Chance")]
+    [Range(0f, 1f)] public float chance = 1f;
 
-    [Tooltip("Used by TargetHasStatus, TargetDoesNotHaveStatus, EnemyWithStatus, EnemyWithoutStatus, Cleanse, etc.")]
-    public EffectType requiredStatus = EffectType.None;
+    [Tooltip("Applied when target is a boss. 0.5 means half chance on bosses.")]
+    public float bossChanceMultiplier = 1f;
 
-    [Tooltip("Used by ManaAtLeast condition.")]
-    public float requiredMana = 0f;
+    [Header("Status On Hit")]
+    [Tooltip("Optional status applied after each hit from this effect.")]
+    public EffectType statusAppliedOnHit = EffectType.None;
 
-    [Header("Special Behaviour")]
-    [Range(0f, 1f)]
-    [Tooltip("For ChainDamage. 0.5 means each jump does half as much damage.")]
-    public float chainDecay = 0.5f;
+    [Range(0f, 1f)] public float statusChanceOnHit = 0f;
+    public int statusValueOnHit = 0;
+    public int statusSecondaryValueOnHit = 0;
+    public int statusDurationOnHit = 0;
+    public bool statusWorksOnBosses = true;
+    public float statusBossChanceMultiplier = 1f;
+    public float statusBossDurationMultiplier = 1f;
 
-    [Tooltip("If true, this effect can affect bosses even when that effect normally should not.")]
-    public bool ignoreBossImmunity = false;
+    [Header("Boss Rules")]
+    [Tooltip("Controls whether this exact effect works on bosses. Damage and status can be split into separate effects.")]
+    public bool worksOnBosses = true;
 
-    [Tooltip("If true, removes the required status after this effect uses it. Useful for consume-style cards.")]
-    public bool removeRequiredStatusAfterUse = false;
+    [Tooltip("Applied to value when target is a boss. Example: Doomed burst uses 0.5.")]
+    public float bossValueMultiplier = 1f;
 
-    [TextArea(2, 4)]
-    public string designerNote;
+    [Tooltip("Applied to duration when target is a boss. Example: Poison can use 0.5.")]
+    public float bossDurationMultiplier = 1f;
 
-    public int GetRolledDuration(float cardManaCost)
+    [Header("Special")]
+    [Tooltip("For status effects that wake when damaged, such as Sleep.")]
+    public bool removeWhenDamaged = false;
+
+    [TextArea(2, 4)] public string designerNote;
+
+    public CardTargetType GetTargetType(CardData owner)
     {
-        int finalMin = randomMinDuration;
-        int finalMax = randomMaxDuration;
+        if (targetOverride == CardTargetType.UseCardTarget && owner != null)
+            return owner.targetType;
 
-        // Your rule: Burn lasts a random number of turns, with minimum based on mana cost.
-        if (effectType == EffectType.Burn && finalMin <= 0)
-            finalMin = Mathf.Max(1, Mathf.CeilToInt(cardManaCost));
+        return targetOverride;
+    }
 
-        if (finalMax > finalMin)
-            return UnityEngine.Random.Range(finalMin, finalMax + 1);
+    public int GetHitCount()
+    {
+        if (randomMaxHits > 0 && randomMaxHits >= randomMinHits)
+            return UnityEngine.Random.Range(Mathf.Max(1, randomMinHits), randomMaxHits + 1);
 
-        if (finalMin > 0)
-            return finalMin;
+        return Mathf.Max(1, hitCount);
+    }
+
+    public int GetBaseValueRoll()
+    {
+        if (randomMaxValue > 0 && randomMaxValue >= randomMinValue)
+            return UnityEngine.Random.Range(randomMinValue, randomMaxValue + 1);
+
+        return value;
+    }
+
+    public int GetDurationRoll()
+    {
+        if (randomMaxDuration > 0 && randomMaxDuration >= randomMinDuration)
+            return UnityEngine.Random.Range(Mathf.Max(1, randomMinDuration), randomMaxDuration + 1);
 
         return duration;
+    }
+
+    public int GetMiniGameBonusTurns(MiniGameResult miniGameResult)
+    {
+        if (miniGameResult == null)
+            return 0;
+
+        int bonus = 0;
+
+        if (addMiniGameBonusTurns)
+        {
+            if (miniGameResult.grade == MiniGameGrade.Perfect)
+                bonus += 2;
+            else if (miniGameResult.grade == MiniGameGrade.Good)
+                bonus += 1;
+        }
+
+        if (miniGameResult.grade == MiniGameGrade.Good || miniGameResult.grade == MiniGameGrade.Perfect)
+            bonus += bonusTurnsOnGreatOrPerfect;
+
+        if (miniGameResult.grade == MiniGameGrade.Perfect)
+            bonus += bonusTurnsOnPerfect;
+
+        return bonus;
     }
 }

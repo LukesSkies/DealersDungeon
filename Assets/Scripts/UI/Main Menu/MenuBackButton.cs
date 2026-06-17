@@ -1,12 +1,11 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-// Attach this to any Back button.
-//
-// It uses the same navigation history as the Esc key.
+// Makes a button go back in the menu.
 public class MenuBackButton : MonoBehaviour
 {
     [Header("Button")]
+
     [SerializeField] private Button button;
 
     private void Awake()
@@ -27,6 +26,7 @@ public class MenuBackButton : MonoBehaviour
             button.onClick.RemoveListener(GoBack);
     }
 
+    // Goes back using MenuNavigator.
     private void GoBack()
     {
         if (MenuNavigator.Instance == null)

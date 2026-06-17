@@ -1,8 +1,9 @@
 using UnityEngine;
 
+// Makes this object face the same direction as the camera.
 public class Billboard : MonoBehaviour
 {
-    void LateUpdate()
+    private void LateUpdate()
     {
         if (Camera.main != null)
         {

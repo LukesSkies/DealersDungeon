@@ -1,9 +1,10 @@
 using UnityEngine;
 
-// This script marks a UI panel as a navigable menu screen.
+// Marks a UI panel as a menu screen.
 public class MenuScreen : MonoBehaviour
 {
     [Header("Screen")]
+
     public MenuScreenId screenId;
 
     [Tooltip("Optional. If empty, this GameObject will be enabled/disabled.")]
@@ -15,12 +16,14 @@ public class MenuScreen : MonoBehaviour
             rootObject = gameObject;
     }
 
+    // Shows or hides this screen.
     public void SetVisible(bool visible)
     {
         if (rootObject != null)
             rootObject.SetActive(visible);
     }
 
+    // Checks if this screen is visible.
     public bool IsVisible()
     {
         return rootObject != null && rootObject.activeSelf;

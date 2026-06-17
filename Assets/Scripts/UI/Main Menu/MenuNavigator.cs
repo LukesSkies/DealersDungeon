@@ -1,31 +1,35 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// This controls all menu navigation.
-//
-// It handles:
-// - opening screens
-// - closing screens
-// - back buttons
-// - Esc key back navigation
-// - screen history
+// Controls menu screen navigation.
 public class MenuNavigator : MonoBehaviour
 {
     public static MenuNavigator Instance;
 
     [Header("Screens")]
+
+    // All menu screens.
     [SerializeField] private List<MenuScreen> screens = new List<MenuScreen>();
 
     [Header("Start Screen")]
+
+    // Screen shown first.
     [SerializeField] private MenuScreenId startScreen = MenuScreenId.MainMenu;
 
     [Header("Input")]
+
+    // If true, Escape goes back.
     [SerializeField] private bool escapeGoesBack = true;
 
     [Header("Debug")]
+
+    // Logs menu navigation.
     [SerializeField] private bool logNavigation = false;
 
+    // Fast screen lookup.
     private Dictionary<MenuScreenId, MenuScreen> screenLookup = new Dictionary<MenuScreenId, MenuScreen>();
+
+    // Previous screens.
     private Stack<MenuScreenId> history = new Stack<MenuScreenId>();
 
     private MenuScreenId currentScreen;
@@ -55,6 +59,7 @@ public class MenuNavigator : MonoBehaviour
             GoBack();
     }
 
+    // Builds screen lookup from the list.
     private void BuildScreenLookup()
     {
         screenLookup.Clear();
@@ -74,16 +79,19 @@ public class MenuNavigator : MonoBehaviour
         }
     }
 
+    // Opens a screen and saves history.
     public void OpenScreen(MenuScreenId targetScreen)
     {
         OpenScreen(targetScreen, true);
     }
 
+    // Opens a screen without saving history.
     public void OpenScreenWithoutHistory(MenuScreenId targetScreen)
     {
         OpenScreen(targetScreen, false);
     }
 
+    // Opens a screen.
     private void OpenScreen(MenuScreenId targetScreen, bool addCurrentToHistory)
     {
         if (!screenLookup.ContainsKey(targetScreen))
@@ -107,6 +115,7 @@ public class MenuNavigator : MonoBehaviour
             Debug.Log($"Opened screen: {targetScreen}");
     }
 
+    // Goes back to the previous screen.
     public void GoBack()
     {
         if (history.Count <= 0)
@@ -131,17 +140,20 @@ public class MenuNavigator : MonoBehaviour
             Debug.Log($"Went back to screen: {previousScreen}");
     }
 
+    // Clears screen history.
     public void ClearHistory()
     {
         history.Clear();
     }
 
+    // Resets back to the start screen.
     public void ResetToMainMenu()
     {
         ClearHistory();
         OpenScreenWithoutHistory(startScreen);
     }
 
+    // Shows one screen and hides the rest.
     private void ShowOnly(MenuScreenId screenToShow)
     {
         foreach (KeyValuePair<MenuScreenId, MenuScreen> pair in screenLookup)

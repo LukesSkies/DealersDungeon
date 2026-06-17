@@ -1,3 +1,4 @@
+// IDs for each menu screen.
 public enum MenuScreenId
 {
     MainMenu,

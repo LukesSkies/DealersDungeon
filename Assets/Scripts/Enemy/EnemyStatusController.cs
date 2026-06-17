@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+// Controls status effects on one enemy.
 public class EnemyStatusController : MonoBehaviour
 {
     [SerializeField] private List<ActiveEffect> activeEffects = new List<ActiveEffect>();
@@ -28,36 +29,56 @@ public class EnemyStatusController : MonoBehaviour
         return controller;
     }
 
-    public void ApplyEffect(CardEffect effect, float sourceCardManaCost)
+    public void ApplyEffect(Enemy enemy, EffectType type, int value, int secondaryValue, int duration, CardDamageType damageType, bool removeWhenDamaged)
     {
-        if (effect == null || effect.effectType == EffectType.None)
+        if (type == EffectType.None)
             return;
 
-        ActiveEffect existing = activeEffects.Find(e => e.type == effect.effectType);
-        ActiveEffect newEffect = new ActiveEffect(effect, sourceCardManaCost);
+        if (!IsEnemyStatusEffect(type))
+            return;
+
+        ActiveEffect existing = GetEffect(type);
 
         if (existing != null)
         {
-            existing.value = Mathf.Max(existing.value, newEffect.value);
-            existing.secondaryValue = Mathf.Max(existing.secondaryValue, newEffect.secondaryValue);
-            existing.duration = Mathf.Max(existing.duration, newEffect.duration);
+            existing.value = Mathf.Max(existing.value, value);
+            existing.secondaryValue = Mathf.Max(existing.secondaryValue, secondaryValue);
+            existing.duration = Mathf.Max(existing.duration, duration);
             existing.stacks++;
-            existing.damageType = newEffect.damageType;
+            existing.damageType = damageType;
+            existing.removeWhenDamaged = existing.removeWhenDamaged || removeWhenDamaged;
         }
         else
         {
-            activeEffects.Add(newEffect);
+            activeEffects.Add(new ActiveEffect(type, value, secondaryValue, duration, damageType, removeWhenDamaged));
         }
+    }
+
+    // Compatibility overload for older scripts that still build CardEffect runtime data.
+    public void ApplyEffect(CardEffect effect, float sourceCardManaCost)
+    {
+        if (effect == null)
+            return;
+
+        ApplyEffect(
+            GetComponent<Enemy>(),
+            effect.effectType,
+            effect.value,
+            effect.secondaryValue,
+            effect.duration,
+            effect.damageType,
+            effect.removeWhenDamaged
+        );
     }
 
     public bool HasEffect(EffectType type)
     {
-        return activeEffects.Exists(e => e.type == type && e.duration != 0);
+        return activeEffects.Exists(e => e != null && e.type == type && e.duration != 0);
     }
 
     public ActiveEffect GetEffect(EffectType type)
     {
-        return activeEffects.Find(e => e.type == type && e.duration != 0);
+        return activeEffects.Find(e => e != null && e.type == type && e.duration != 0);
     }
 
     public int GetEffectValue(EffectType type)
@@ -71,8 +92,9 @@ public class EnemyStatusController : MonoBehaviour
         return HasEffect(EffectType.Poison) ||
                HasEffect(EffectType.Burn) ||
                HasEffect(EffectType.Bleed) ||
-               HasEffect(EffectType.Rot) ||
-               HasEffect(EffectType.LeechDOT);
+               HasEffect(EffectType.Leech) ||
+               HasEffect(EffectType.Volatile) ||
+               HasEffect(EffectType.Wildfire);
     }
 
     public void RemoveEffect(EffectType type)
@@ -113,7 +135,10 @@ public class EnemyStatusController : MonoBehaviour
         {
             if (IsDOT(activeEffects[i].type))
             {
-                damage += Mathf.Max(1, activeEffects[i].value) * Mathf.Max(1, activeEffects[i].stacks) * Mathf.Max(1, damagePerStack);
+                damage += Mathf.Max(1, activeEffects[i].value) *
+                          Mathf.Max(1, activeEffects[i].stacks) *
+                          Mathf.Max(1, damagePerStack);
+
                 activeEffects.RemoveAt(i);
             }
         }
@@ -126,7 +151,7 @@ public class EnemyStatusController : MonoBehaviour
         for (int i = 0; i < activeEffects.Count; i++)
         {
             if (IsDOT(activeEffects[i].type))
-                activeEffects[i].value += amount;
+                activeEffects[i].value += Mathf.Max(1, amount);
         }
     }
 
@@ -139,44 +164,36 @@ public class EnemyStatusController : MonoBehaviour
             return incomingDamage;
 
         float multiplier = 1f;
-        int bonusFlatDamage = 0;
 
         if (HasEffect(EffectType.Petrify))
             multiplier *= 0.5f;
 
-        if (HasEffect(EffectType.Vulnerable))
-            multiplier *= 1.5f;
-
-        if (HasEffect(EffectType.DefenseDebuff))
-            multiplier *= 1.25f;
-
         if (HasEffect(EffectType.Curse))
-            multiplier *= 1.25f;
-
-        if (HasEffect(EffectType.Bleed))
             multiplier *= 1.2f;
 
-        if (HasEffect(EffectType.Shock) && damageType == CardDamageType.Spell)
+        if (HasEffect(EffectType.Softened))
+            multiplier *= 1.25f;
+
+        if (HasEffect(EffectType.Vulnerable))
             multiplier *= 1.3f;
 
-        if (HasEffect(EffectType.Softened) && damageType == CardDamageType.Physical)
-            multiplier *= 1.3f;
+        if (HasEffect(EffectType.Bleed) && damageType == CardDamageType.Physical)
+            multiplier *= 1.1f;
 
         if (HasEffect(EffectType.Cripple) && enemy != null && enemy.GetCurrentHP() <= enemy.maxHP / 2)
-            multiplier *= 1.5f;
+            multiplier *= 1.4f;
 
         ActiveEffect marked = GetEffect(EffectType.Marked);
-        if (marked != null)
+
+        if (marked != null && damageType == CardDamageType.Physical)
         {
-            bonusFlatDamage += Mathf.Max(1, marked.value);
+            multiplier *= 1.5f;
             RemoveEffect(EffectType.Marked);
         }
 
-        int result = Mathf.RoundToInt(incomingDamage * multiplier) + bonusFlatDamage;
-        return Mathf.Max(0, result);
+        return Mathf.Max(0, Mathf.RoundToInt(incomingDamage * multiplier));
     }
 
-    // Returns true if the enemy action has already been handled or should be skipped.
     public bool TryHandlePreAttack(Enemy enemy)
     {
         if (enemy == null)
@@ -186,46 +203,27 @@ public class EnemyStatusController : MonoBehaviour
             return true;
 
         ActiveEffect dazed = GetEffect(EffectType.Dazed);
+
         if (dazed != null)
         {
-            float missChance = Mathf.Clamp01(Mathf.Max(1, dazed.value) / 100f);
-            if (UnityEngine.Random.value <= missChance)
+            float loseTurnChance = Mathf.Clamp01(Mathf.Max(1, dazed.value) / 100f);
+
+            if (Random.value <= loseTurnChance)
                 return true;
         }
 
         ActiveEffect blind = GetEffect(EffectType.Blind);
+
         if (blind != null)
         {
             float missChance = Mathf.Clamp01(Mathf.Max(1, blind.value) / 100f);
-            if (UnityEngine.Random.value <= missChance)
+
+            if (Random.value <= missChance)
                 return true;
-        }
-
-        ActiveEffect panicked = GetEffect(EffectType.Panicked);
-        if (panicked != null)
-        {
-            float failActionChance = Mathf.Clamp01(Mathf.Max(1, panicked.value) / 100f);
-            if (UnityEngine.Random.value <= failActionChance)
-                return true;
-        }
-
-        ActiveEffect confusion = GetEffect(EffectType.Confusion);
-        if (confusion != null)
-        {
-            float selfHitChance = Mathf.Clamp01(Mathf.Max(1, confusion.secondaryValue) / 100f);
-
-            if (confusion.secondaryValue <= 0)
-                selfHitChance = 0.5f;
-
-            if (UnityEngine.Random.value <= selfHitChance)
-            {
-                int selfDamage = Mathf.Max(1, confusion.value);
-                enemy.TakeDamage(selfDamage);
-                return true;
-            }
         }
 
         ActiveEffect charmed = GetEffect(EffectType.Charmed);
+
         if (charmed != null)
         {
             float charmChance = Mathf.Clamp01(Mathf.Max(1, charmed.secondaryValue) / 100f);
@@ -233,14 +231,15 @@ public class EnemyStatusController : MonoBehaviour
             if (charmed.secondaryValue <= 0)
                 charmChance = 0.5f;
 
-            if (UnityEngine.Random.value <= charmChance)
+            if (Random.value <= charmChance)
             {
                 Enemy otherEnemy = PickRandomOtherEnemy(enemy);
+                int charmDamage = Mathf.Max(1, charmed.value);
 
                 if (otherEnemy != null)
-                    otherEnemy.TakeDamage(Mathf.Max(1, charmed.value));
+                    otherEnemy.TakeDamage(charmDamage, CardDamageType.Physical, false);
                 else
-                    enemy.TakeDamage(Mathf.Max(1, charmed.value));
+                    enemy.TakeDamage(charmDamage, CardDamageType.Physical, false);
 
                 return true;
             }
@@ -249,53 +248,116 @@ public class EnemyStatusController : MonoBehaviour
         return false;
     }
 
+    public float GetOutgoingDamageMultiplier()
+    {
+        float multiplier = 1f;
+
+        if (HasEffect(EffectType.Curse))
+            multiplier *= 0.8f;
+
+        if (HasEffect(EffectType.Weakened))
+            multiplier *= 0.7f;
+
+        return Mathf.Max(0f, multiplier);
+    }
+
+    public void NotifyDamaged(Enemy enemy, int damageTaken)
+    {
+        if (damageTaken <= 0)
+            return;
+
+        for (int i = activeEffects.Count - 1; i >= 0; i--)
+        {
+            if (activeEffects[i].removeWhenDamaged)
+                activeEffects.RemoveAt(i);
+        }
+    }
+
     public void ProcessTurnEnd(Enemy enemy)
     {
         if (enemy == null)
             return;
 
-        bool causedVolatileDeath = false;
+        bool hadVolatile = HasEffect(EffectType.Volatile);
 
         for (int i = activeEffects.Count - 1; i >= 0; i--)
         {
             ActiveEffect effect = activeEffects[i];
+            bool removeEffect = false;
 
             switch (effect.type)
             {
                 case EffectType.Poison:
-                case EffectType.Burn:
                 case EffectType.Bleed:
-                case EffectType.Rot:
-                    enemy.TakeDamage(Mathf.Max(1, effect.value) * Mathf.Max(1, effect.stacks));
+                    enemy.TakeDamage(Mathf.Max(1, effect.value) * Mathf.Max(1, effect.stacks), effect.damageType, false);
+                    effect.duration--;
                     break;
 
-                case EffectType.LeechDOT:
+                case EffectType.Burn:
+                    enemy.TakeDamage(Mathf.Max(1, effect.value) * Mathf.Max(1, effect.stacks), effect.damageType, false);
+                    effect.duration--;
+
+                    if (effect.duration <= 0)
+                    {
+                        float continueChance = effect.secondaryValue > 0 ? effect.secondaryValue / 100f : 0.5f;
+
+                        if (enemy.isBoss)
+                            continueChance *= 0.5f;
+
+                        if (Random.value <= Mathf.Clamp01(continueChance))
+                            effect.duration = 1;
+                        else
+                            removeEffect = true;
+                    }
+                    break;
+
+                case EffectType.Leech:
                     int leechDamage = Mathf.Max(1, effect.value) * Mathf.Max(1, effect.stacks);
-                    enemy.TakeDamage(leechDamage);
+                    enemy.TakeDamage(leechDamage, effect.damageType, false);
+
                     if (PlayerHealth.Instance != null)
                         PlayerHealth.Instance.Heal(Mathf.Max(1, leechDamage / 2));
+
+                    effect.duration--;
                     break;
 
-                case EffectType.Doomed:
-                    if (effect.duration == 1)
-                        enemy.TakeDamage(Mathf.Max(1, effect.value));
+                case EffectType.Volatile:
+                    enemy.TakeDamage(Mathf.Max(1, effect.value) * Mathf.Max(1, effect.stacks), effect.damageType, false);
+                    effect.duration--;
                     break;
 
                 case EffectType.Wildfire:
-                    TrySpreadStatus(enemy, EffectType.Burn, effect.value, Mathf.Max(1, effect.secondaryValue));
+                    enemy.TakeDamage(Mathf.Max(1, effect.value), effect.damageType, false);
+                    TrySpreadStatus(enemy, EffectType.Burn, effect.value, 50, 1);
+                    effect.duration--;
+                    break;
+
+                case EffectType.Doomed:
+                    effect.duration--;
+
+                    if (effect.duration <= 0)
+                    {
+                        int burstDamage = Mathf.Max(1, effect.secondaryValue > 0 ? effect.secondaryValue : effect.value);
+
+                        if (enemy.isBoss)
+                            burstDamage = Mathf.CeilToInt(burstDamage * 0.5f);
+
+                        enemy.TakeDamage(burstDamage, CardDamageType.Magic, true);
+                        removeEffect = true;
+                    }
+                    break;
+
+                default:
+                    if (effect.duration > 0)
+                        effect.duration--;
                     break;
             }
 
-            effect.duration--;
-
-            if (effect.duration <= 0)
+            if (removeEffect || effect.duration <= 0)
                 activeEffects.RemoveAt(i);
         }
 
-        if (enemy.GetCurrentHP() <= 0 && HasEffect(EffectType.VolatileDOT))
-            causedVolatileDeath = true;
-
-        if (causedVolatileDeath)
+        if (hadVolatile && enemy.GetCurrentHP() <= 0)
             ExplodeDOTs(enemy);
     }
 
@@ -304,39 +366,67 @@ public class EnemyStatusController : MonoBehaviour
         return type == EffectType.Poison ||
                type == EffectType.Burn ||
                type == EffectType.Bleed ||
-               type == EffectType.Rot ||
-               type == EffectType.LeechDOT;
+               type == EffectType.Leech ||
+               type == EffectType.Volatile ||
+               type == EffectType.Wildfire;
     }
 
     public static bool IsNegativeEffect(EffectType type)
     {
         switch (type)
         {
-            case EffectType.Poison:
-            case EffectType.Burn:
-            case EffectType.Bleed:
             case EffectType.Blind:
             case EffectType.Curse:
             case EffectType.Petrify:
-            case EffectType.Shock:
             case EffectType.Marked:
             case EffectType.Exposed:
             case EffectType.Weakened:
             case EffectType.Softened:
-            case EffectType.Hexed:
             case EffectType.Doomed:
             case EffectType.Silenced:
             case EffectType.Dazed:
-            case EffectType.Panicked:
-            case EffectType.Taunted:
+            case EffectType.Charmed:
+            case EffectType.Poison:
+            case EffectType.Burn:
+            case EffectType.Bleed:
             case EffectType.Stun:
             case EffectType.Sleep:
-            case EffectType.Confusion:
-            case EffectType.Fear:
             case EffectType.Cripple:
             case EffectType.Vulnerable:
-            case EffectType.Rot:
-            case EffectType.LeechDOT:
+            case EffectType.Leech:
+            case EffectType.Volatile:
+            case EffectType.Wildfire:
+                return true;
+        }
+
+        return false;
+    }
+
+    public static bool IsEnemyStatusEffect(EffectType type)
+    {
+        switch (type)
+        {
+            case EffectType.Blind:
+            case EffectType.Curse:
+            case EffectType.Petrify:
+            case EffectType.Marked:
+            case EffectType.Exposed:
+            case EffectType.Weakened:
+            case EffectType.Softened:
+            case EffectType.Doomed:
+            case EffectType.Silenced:
+            case EffectType.Dazed:
+            case EffectType.Charmed:
+            case EffectType.Poison:
+            case EffectType.Burn:
+            case EffectType.Bleed:
+            case EffectType.Stun:
+            case EffectType.Sleep:
+            case EffectType.Cripple:
+            case EffectType.Vulnerable:
+            case EffectType.Leech:
+            case EffectType.Volatile:
+            case EffectType.Wildfire:
                 return true;
         }
 
@@ -354,25 +444,20 @@ public class EnemyStatusController : MonoBehaviour
         if (enemies.Count == 0)
             return null;
 
-        return enemies[UnityEngine.Random.Range(0, enemies.Count)];
+        return enemies[Random.Range(0, enemies.Count)];
     }
 
-    private void TrySpreadStatus(Enemy sourceEnemy, EffectType statusType, int value, int duration)
+    private void TrySpreadStatus(Enemy sourceEnemy, EffectType statusType, int value, int secondaryValue, int duration)
     {
         Enemy target = PickRandomOtherEnemy(sourceEnemy);
 
         if (target == null)
             return;
 
-        CardEffect spreadEffect = new CardEffect
-        {
-            effectType = statusType,
-            value = value,
-            duration = duration,
-            targetType = TargetType.SingleEnemy
-        };
+        if (sourceEnemy != null && sourceEnemy.isBoss)
+            return;
 
-        EnemyStatusController.GetOrAdd(target).ApplyEffect(spreadEffect, 0f);
+        EnemyStatusController.GetOrAdd(target).ApplyEffect(target, statusType, value, secondaryValue, duration, CardDamageType.Magic, false);
     }
 
     private void ExplodeDOTs(Enemy sourceEnemy)
@@ -383,7 +468,7 @@ public class EnemyStatusController : MonoBehaviour
 
         enemies.RemoveAll(enemy => enemy == null || enemy == sourceEnemy || enemy.GetCurrentHP() <= 0);
 
-        int explosionDamage = 0;
+        int explosionDamage = 6;
 
         foreach (ActiveEffect effect in activeEffects)
         {
@@ -391,10 +476,10 @@ public class EnemyStatusController : MonoBehaviour
                 explosionDamage += Mathf.Max(1, effect.value) * Mathf.Max(1, effect.stacks);
         }
 
-        if (explosionDamage <= 0)
-            explosionDamage = 1;
+        if (sourceEnemy != null && sourceEnemy.isBoss)
+            explosionDamage = Mathf.CeilToInt(explosionDamage * 0.5f);
 
         foreach (Enemy enemy in enemies)
-            enemy.TakeDamage(explosionDamage);
+            enemy.TakeDamage(explosionDamage, CardDamageType.Magic, true);
     }
 }

@@ -2,13 +2,15 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 
-// Attach this to a button that should load a scene.
+// Loads a scene when clicked.
 public class MenuSceneButton : MonoBehaviour
 {
     [Header("Button")]
+
     [SerializeField] private Button button;
 
     [Header("Scene")]
+
     [SerializeField] private string sceneName;
 
     private void Awake()
@@ -29,6 +31,7 @@ public class MenuSceneButton : MonoBehaviour
             button.onClick.RemoveListener(LoadScene);
     }
 
+    // Loads the selected scene.
     private void LoadScene()
     {
         if (string.IsNullOrWhiteSpace(sceneName))
