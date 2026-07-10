@@ -1,0 +1,70 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6347511114019e94e8875a40569fb674, type: 3}
+  m_Name: Damage_Buff
+  m_EditorClassIdentifier: 
+  cardName: Damage Buff
+  cardType: 2
+  cardSprite: {fileID: 0}
+  miniGameIcon: {fileID: 0}
+  skillText: Physical cards deal 20% more damage for 2 turns. Great or Perfect increases
+    duration.
+  baseDamage: 1
+  basicAttackDamageType: 0
+  targetType: 9
+  manaCostMode: 0
+  manaCost: 2
+  minimumManaToCast: 0
+  spendManaOnSkillCast: 1
+  miniGameType: 5
+  miniGameTimeLimit: 3
+  miniGameInputKey: 32
+  allowLeftClickInput: 1
+  miniGameSequenceLength: 4
+  miniGameMashTarget: 20
+  miniGameSliderSpeed: 1.75
+  miniGameHoldSpeed: 0.75
+  effects:
+  - effectType: 38
+    targetOverride: 9
+    damageType: 1
+    value: 20
+    secondaryValue: 0
+    duration: 2
+    addBaseDamageToValue: 0
+    scaleValueWithMiniGame: 1
+    addMiniGameBonusTurns: 0
+    hitCount: 1
+    randomMinHits: 0
+    randomMaxHits: 0
+    randomMinValue: 0
+    randomMaxValue: 0
+    randomMinDuration: 0
+    randomMaxDuration: 0
+    bonusTurnsOnGreatOrPerfect: 1
+    bonusTurnsOnPerfect: 0
+    perfectValueOverride: 0
+    chance: 1
+    bossChanceMultiplier: 1
+    statusAppliedOnHit: 0
+    statusChanceOnHit: 0
+    statusValueOnHit: 0
+    statusSecondaryValueOnHit: 0
+    statusDurationOnHit: 0
+    statusWorksOnBosses: 1
+    statusBossChanceMultiplier: 1
+    statusBossDurationMultiplier: 1
+    worksOnBosses: 1
+    bossValueMultiplier: 1
+    bossDurationMultiplier: 1
+    removeWhenDamaged: 0
+    designerNote: 

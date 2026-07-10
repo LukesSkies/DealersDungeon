@@ -37,9 +37,13 @@ public class Card : MonoBehaviour, IPointerClickHandler
 
     private class SkillCastContext
     {
+        public Card sourceCard;
+        public CardData sourceCardData;
         public Enemy chosenTarget;
         public MiniGameResult miniGameResult;
         public float manaSpent;
+        public float powerMultiplier = 1f;
+        public int temporarySkillValueBonus;
         public int totalDamageDealt;
         public int lastDamageDealt;
         public bool killedEnemy;
@@ -231,7 +235,13 @@ public class Card : MonoBehaviour, IPointerClickHandler
             return;
         }
 
-        if (cardData.RequiresEnemyTargetForSkill())
+        if (HasCopyEffect() && !HasValidCopyTarget())
+        {
+            FlashNoMana();
+            return;
+        }
+
+        if (CardSkillNeedsEnemyTarget())
         {
             isWaitingForSkillTarget = true;
             RefreshVisualColor();
@@ -270,8 +280,14 @@ public class Card : MonoBehaviour, IPointerClickHandler
         if (cardData == null || isCastingSkill)
             return false;
 
-        if (cardData.RequiresEnemyTargetForSkill() && chosenTarget == null)
+        if (CardSkillNeedsEnemyTarget() && chosenTarget == null)
             return false;
+
+        if (HasCopyEffect() && !HasValidCopyTarget())
+        {
+            FlashNoMana();
+            return false;
+        }
 
         float manaSpent = 0f;
 
@@ -337,9 +353,13 @@ public class Card : MonoBehaviour, IPointerClickHandler
 
         SkillCastContext context = new SkillCastContext
         {
+            sourceCard = this,
+            sourceCardData = cardData,
             chosenTarget = chosenTarget,
             miniGameResult = miniGameResult ?? MiniGameResult.None(),
-            manaSpent = manaSpent
+            manaSpent = manaSpent,
+            powerMultiplier = 1f,
+            temporarySkillValueBonus = temporarySkillValueBonus
         };
 
         ExecuteEffects(context);
@@ -443,12 +463,14 @@ public class Card : MonoBehaviour, IPointerClickHandler
 
     private void ExecuteEffects(SkillCastContext context)
     {
-        if (cardData == null || cardData.effects == null)
+        CardData sourceData = GetContextCardData(context);
+
+        if (sourceData == null || sourceData.effects == null)
             return;
 
-        for (int i = 0; i < cardData.effects.Count; i++)
+        for (int i = 0; i < sourceData.effects.Count; i++)
         {
-            CardEffect effect = cardData.effects[i];
+            CardEffect effect = sourceData.effects[i];
 
             if (effect == null || effect.effectType == EffectType.None)
                 continue;
@@ -465,7 +487,7 @@ public class Card : MonoBehaviour, IPointerClickHandler
                 continue;
             }
 
-            List<Enemy> targets = ResolveTargets(effect, context.chosenTarget);
+            List<Enemy> targets = ResolveTargets(effect, context);
 
             for (int t = 0; t < targets.Count; t++)
             {
@@ -487,15 +509,16 @@ public class Card : MonoBehaviour, IPointerClickHandler
         }
     }
 
-    private List<Enemy> ResolveTargets(CardEffect effect, Enemy chosenTarget)
+    private List<Enemy> ResolveTargets(CardEffect effect, SkillCastContext context)
     {
-        CardTargetType targetType = effect.GetTargetType(cardData);
+        CardData sourceData = GetContextCardData(context);
+        CardTargetType targetType = effect.GetTargetType(sourceData);
         List<Enemy> enemies = GetAliveEnemies();
 
         switch (targetType)
         {
             case CardTargetType.SelectedEnemy:
-                return chosenTarget == null ? new List<Enemy>() : new List<Enemy> { chosenTarget };
+                return context.chosenTarget == null ? new List<Enemy>() : new List<Enemy> { context.chosenTarget };
 
             case CardTargetType.RandomEnemy:
                 return PickRandomEnemies(enemies, 1);
@@ -510,7 +533,7 @@ public class Card : MonoBehaviour, IPointerClickHandler
                 return enemies.OrderByDescending(enemy => enemy.GetCurrentHP()).Take(1).ToList();
 
             case CardTargetType.AdjacentEnemies:
-                return GetAdjacentEnemies(chosenTarget);
+                return GetAdjacentEnemies(context.chosenTarget);
 
             case CardTargetType.AllNonBossEnemies:
                 return enemies.Where(enemy => !enemy.isBoss).ToList();
@@ -627,7 +650,7 @@ public class Card : MonoBehaviour, IPointerClickHandler
 
         for (int i = 0; i < hits; i++)
         {
-            List<Enemy> enemies = GetAliveEnemies();
+            List<Enemy> enemies = ResolveTargets(effect, context);
 
             if (enemies.Count == 0)
                 return;
@@ -644,11 +667,11 @@ public class Card : MonoBehaviour, IPointerClickHandler
 
             int value = CalculateSkillValue(effect, enemy, context);
             DealEnemyDamage(enemy, value, effect.damageType, false, context);
-            TryApplyStatusOnHit(effect, enemy);
+            TryApplyStatusOnHit(effect, enemy, context);
         }
     }
 
-    private void TryApplyStatusOnHit(CardEffect effect, Enemy enemy)
+    private void TryApplyStatusOnHit(CardEffect effect, Enemy enemy, SkillCastContext context)
     {
         if (effect == null || enemy == null)
             return;
@@ -674,10 +697,12 @@ public class Card : MonoBehaviour, IPointerClickHandler
         if (enemy.isBoss)
             duration = Mathf.CeilToInt(duration * effect.statusBossDurationMultiplier);
 
+        int statusValue = Mathf.Max(0, Mathf.RoundToInt(effect.statusValueOnHit * GetContextPowerMultiplier(context)));
+
         EnemyStatusController.GetOrAdd(enemy).ApplyEffect(
             enemy,
             effect.statusAppliedOnHit,
-            Mathf.Max(0, effect.statusValueOnHit),
+            statusValue,
             Mathf.Max(0, effect.statusSecondaryValueOnHit),
             Mathf.Max(0, duration),
             effect.damageType,
@@ -695,10 +720,12 @@ public class Card : MonoBehaviour, IPointerClickHandler
             damage = Mathf.RoundToInt(damage * context.miniGameResult.multiplier);
 
         if (effect.addBaseDamageToValue)
-            damage += cardData.baseDamage;
+            damage += GetContextBaseDamage(context);
 
         if (enemy.isBoss)
             damage = Mathf.RoundToInt(damage * effect.bossValueMultiplier);
+
+        damage = Mathf.RoundToInt(damage * GetContextPowerMultiplier(context));
 
         DealEnemyDamage(enemy, CalculateSkillDamage(damage, effect.damageType), effect.damageType, false, context);
     }
@@ -712,10 +739,12 @@ public class Card : MonoBehaviour, IPointerClickHandler
             damage = Mathf.RoundToInt(damage * context.miniGameResult.multiplier);
 
         if (effect.addBaseDamageToValue)
-            damage += cardData.baseDamage;
+            damage += GetContextBaseDamage(context);
 
         if (enemy.isBoss)
             damage = Mathf.RoundToInt(damage * effect.bossValueMultiplier);
+
+        damage = Mathf.RoundToInt(damage * GetContextPowerMultiplier(context));
 
         DealEnemyDamage(enemy, CalculateSkillDamage(damage, effect.damageType), effect.damageType, false, context);
     }
@@ -749,10 +778,12 @@ public class Card : MonoBehaviour, IPointerClickHandler
         if (effect.scaleValueWithMiniGame && context.miniGameResult != null)
             manaDamage = Mathf.RoundToInt(manaDamage * context.miniGameResult.multiplier);
 
-        int finalDamage = cardData.baseDamage + temporarySkillValueBonus + manaDamage;
+        int finalDamage = GetContextBaseDamage(context) + context.temporarySkillValueBonus + manaDamage;
 
         if (enemy.isBoss)
             finalDamage = Mathf.RoundToInt(finalDamage * effect.bossValueMultiplier);
+
+        finalDamage = Mathf.RoundToInt(finalDamage * GetContextPowerMultiplier(context));
 
         DealEnemyDamage(enemy, CalculateSkillDamage(finalDamage, effect.damageType), effect.damageType, false, context);
     }
@@ -892,11 +923,11 @@ public class Card : MonoBehaviour, IPointerClickHandler
                 break;
 
             case EffectType.CloneLeft:
-                CloneRelativeCard(true);
+                CloneRelativeCard(true, context);
                 break;
 
             case EffectType.CloneRight:
-                CloneRelativeCard(false);
+                CloneRelativeCard(false, context);
                 break;
         }
     }
@@ -929,7 +960,7 @@ public class Card : MonoBehaviour, IPointerClickHandler
         }
     }
 
-    private void CloneRelativeCard(bool left)
+    private void CloneRelativeCard(bool left, SkillCastContext parentContext)
     {
         if (HandManager.Instance == null)
             return;
@@ -941,12 +972,194 @@ public class Card : MonoBehaviour, IPointerClickHandler
         if (targetCard == null)
             return;
 
-        HandManager.Instance.CloneCardAfterCurrent(targetCard);
+        CardData targetData = targetCard.GetCardData();
+
+        if (!CanCopyCardAbility(targetData))
+            return;
+
+        SkillCastContext copiedContext = new SkillCastContext
+        {
+            sourceCard = targetCard,
+            sourceCardData = targetData,
+            chosenTarget = parentContext.chosenTarget,
+            miniGameResult = parentContext.miniGameResult ?? MiniGameResult.None(),
+            manaSpent = parentContext.manaSpent,
+            powerMultiplier = 0.7f,
+            temporarySkillValueBonus = targetCard.temporarySkillValueBonus
+        };
+
+        ExecuteEffects(copiedContext);
+    }
+
+    private bool CardSkillNeedsEnemyTarget()
+    {
+        if (cardData == null)
+            return false;
+
+        if (cardData.RequiresEnemyTargetForSkill())
+            return true;
+
+        if (!HasCopyEffect())
+            return false;
+
+        List<CardEffect> effects = cardData.effects;
+
+        for (int i = 0; i < effects.Count; i++)
+        {
+            CardEffect effect = effects[i];
+
+            if (effect == null)
+                continue;
+
+            bool left = effect.effectType == EffectType.CloneLeft;
+            bool right = effect.effectType == EffectType.CloneRight;
+
+            if (!left && !right)
+                continue;
+
+            Card copyTarget = GetCopyTarget(left);
+
+            if (copyTarget == null)
+                continue;
+
+            CardData copyData = copyTarget.GetCardData();
+
+            if (CanCopyCardAbility(copyData) && copyData.RequiresEnemyTargetForSkill())
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool HasCopyEffect()
+    {
+        if (cardData == null || cardData.effects == null)
+            return false;
+
+        for (int i = 0; i < cardData.effects.Count; i++)
+        {
+            CardEffect effect = cardData.effects[i];
+
+            if (effect == null)
+                continue;
+
+            if (effect.effectType == EffectType.CloneLeft || effect.effectType == EffectType.CloneRight)
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool HasValidCopyTarget()
+    {
+        if (cardData == null || cardData.effects == null)
+            return true;
+
+        bool foundCopyEffect = false;
+
+        for (int i = 0; i < cardData.effects.Count; i++)
+        {
+            CardEffect effect = cardData.effects[i];
+
+            if (effect == null)
+                continue;
+
+            bool left = effect.effectType == EffectType.CloneLeft;
+            bool right = effect.effectType == EffectType.CloneRight;
+
+            if (!left && !right)
+                continue;
+
+            foundCopyEffect = true;
+
+            Card targetCard = GetCopyTarget(left);
+
+            if (targetCard != null && CanCopyCardAbility(targetCard.GetCardData()))
+                return true;
+        }
+
+        return !foundCopyEffect;
+    }
+
+    private Card GetCopyTarget(bool left)
+    {
+        if (HandManager.Instance == null)
+            return null;
+
+        return left
+            ? HandManager.Instance.GetPreviousCard(this)
+            : HandManager.Instance.GetNextCard(this);
+    }
+
+    private bool CanCopyCardAbility(CardData data)
+    {
+        if (data == null || !data.HasSkill())
+            return false;
+
+        string cardName = data.cardName == null ? "" : data.cardName.Trim();
+
+        if (cardName == "Clone" ||
+            cardName == "Mirror" ||
+            cardName == "Ghost" ||
+            cardName == "Full Heal" ||
+            cardName == "Extreme Buff" ||
+            cardName == "All In")
+        {
+            return false;
+        }
+
+        if (data.effects == null)
+            return false;
+
+        for (int i = 0; i < data.effects.Count; i++)
+        {
+            CardEffect effect = data.effects[i];
+
+            if (effect == null)
+                continue;
+
+            if (effect.effectType == EffectType.CloneLeft ||
+                effect.effectType == EffectType.CloneRight ||
+                effect.effectType == EffectType.FullHeal ||
+                effect.effectType == EffectType.ExtremeBuff ||
+                effect.effectType == EffectType.AllInDamage)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private CardData GetContextCardData(SkillCastContext context)
+    {
+        if (context != null && context.sourceCardData != null)
+            return context.sourceCardData;
+
+        return cardData;
+    }
+
+    private int GetContextBaseDamage(SkillCastContext context)
+    {
+        CardData sourceData = GetContextCardData(context);
+
+        if (sourceData == null)
+            return 0;
+
+        return sourceData.baseDamage;
+    }
+
+    private float GetContextPowerMultiplier(SkillCastContext context)
+    {
+        if (context == null)
+            return 1f;
+
+        return Mathf.Max(0f, context.powerMultiplier);
     }
 
     private int CalculateSkillValue(CardEffect effect, Enemy enemy, SkillCastContext context)
     {
-        int value = effect.GetBaseValueRoll() + temporarySkillValueBonus;
+        int value = effect.GetBaseValueRoll() + context.temporarySkillValueBonus;
 
         if (context.miniGameResult != null && context.miniGameResult.grade == MiniGameGrade.Perfect && effect.perfectValueOverride > 0)
             value = effect.perfectValueOverride;
@@ -954,24 +1167,28 @@ public class Card : MonoBehaviour, IPointerClickHandler
         if (effect.scaleValueWithMiniGame && context.miniGameResult != null)
             value = Mathf.RoundToInt(value * context.miniGameResult.multiplier);
 
-        if (effect.addBaseDamageToValue && cardData != null)
-            value += cardData.baseDamage;
+        if (effect.addBaseDamageToValue)
+            value += GetContextBaseDamage(context);
 
         if (enemy != null && enemy.isBoss)
             value = Mathf.RoundToInt(value * effect.bossValueMultiplier);
+
+        value = Mathf.RoundToInt(value * GetContextPowerMultiplier(context));
 
         return CalculateSkillDamage(Mathf.Max(0, value), effect.damageType);
     }
 
     private int CalculateStatusValue(CardEffect effect, Enemy enemy, SkillCastContext context)
     {
-        int value = effect.GetBaseValueRoll() + temporarySkillValueBonus;
+        int value = effect.GetBaseValueRoll() + context.temporarySkillValueBonus;
 
         if (effect.scaleValueWithMiniGame && context.miniGameResult != null)
             value = Mathf.RoundToInt(value * context.miniGameResult.multiplier);
 
         if (enemy != null && enemy.isBoss)
             value = Mathf.RoundToInt(value * effect.bossValueMultiplier);
+
+        value = Mathf.RoundToInt(value * GetContextPowerMultiplier(context));
 
         return Mathf.Max(0, value);
     }
@@ -988,7 +1205,7 @@ public class Card : MonoBehaviour, IPointerClickHandler
 
     private int CalculateSupportValue(CardEffect effect, SkillCastContext context)
     {
-        int value = effect.GetBaseValueRoll() + temporarySkillValueBonus;
+        int value = effect.GetBaseValueRoll() + context.temporarySkillValueBonus;
 
         if (context.miniGameResult != null && context.miniGameResult.grade == MiniGameGrade.Perfect && effect.perfectValueOverride > 0)
             value = effect.perfectValueOverride;
@@ -996,11 +1213,13 @@ public class Card : MonoBehaviour, IPointerClickHandler
         if (effect.scaleValueWithMiniGame && context.miniGameResult != null)
             value = Mathf.RoundToInt(value * context.miniGameResult.multiplier);
 
-        if (effect.addBaseDamageToValue && cardData != null)
-            value += cardData.baseDamage;
+        if (effect.addBaseDamageToValue)
+            value += GetContextBaseDamage(context);
 
         if (effect.secondaryValue > 0)
             value += effect.secondaryValue;
+
+        value = Mathf.RoundToInt(value * GetContextPowerMultiplier(context));
 
         if (BuffManager.Instance != null)
             value = Mathf.RoundToInt(value * BuffManager.Instance.GetSupportMultiplier());
